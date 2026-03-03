@@ -7,7 +7,7 @@ const DROP_HEIGHT = 5
 const ANIM_DURATION = 0.4
 const DEC_DROP_HEIGHT = 4
 const DEC_ANIM_DURATION = 0.3
-const DEC_DELAY = 400
+const DEC_DELAY = 0.4 // seconds (for gsap.delayedCall)
 
 /**
  * Hide all tile and decoration instances (for animation start)
@@ -186,6 +186,9 @@ export function animatePlacements(grid, collapseOrder, delay, onComplete) {
   const decsByTile = buildDecorationMap(grid)
   const fillsByTile = grid.bottomFills
   const lastIndex = collapseOrder.length - 1
+  const invalidIds = grid.decorations?._invalidDecIds
+
+  if (!grid._decTweens) grid._decTweens = []
 
   let i = 0
   const step = () => {
@@ -203,7 +206,7 @@ export function animatePlacements(grid, collapseOrder, delay, onComplete) {
       const targetY = tile.level * LEVEL_HEIGHT
       const rotationY = -tile.rotation * Math.PI / 3
       const fillId = fillsByTile.get(`${tile.gridX},${tile.gridZ}`)
-      const anim = { y: targetY + DROP_HEIGHT, scale: 1 }
+      const anim = { y: targetY + DROP_HEIGHT }
       tile._anim = anim
       const tileKey = `${tile.gridX},${tile.gridZ}`
       const decs = decsByTile.get(tileKey)
@@ -216,7 +219,7 @@ export function animatePlacements(grid, collapseOrder, delay, onComplete) {
           if (!grid.hexMesh) return
           dummy.position.set(pos.x, anim.y, pos.z)
           dummy.rotation.y = rotationY
-          dummy.scale.setScalar(anim.scale)
+          dummy.scale.setScalar(1)
           dummy.updateMatrix()
           grid.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
 
@@ -224,7 +227,7 @@ export function animatePlacements(grid, collapseOrder, delay, onComplete) {
             const tileY = tile.level * LEVEL_HEIGHT
             dummy.position.set(pos.x, anim.y, pos.z)
             dummy.rotation.y = 0
-            dummy.scale.set(anim.scale, tileY, anim.scale)
+            dummy.scale.set(1, tileY, 1)
             dummy.updateMatrix()
             grid.hexMesh.setMatrixAt(fillId, dummy.matrix)
           }
@@ -235,14 +238,26 @@ export function animatePlacements(grid, collapseOrder, delay, onComplete) {
 
       if (decs) {
         const decComplete = isLast ? onComplete : null
-        setTimeout(() => animateDecoration(grid, decs, decComplete), DEC_DELAY)
+        const delayedCall = gsap.delayedCall(DEC_DELAY, () => {
+          // Filter out any decorations whose instanceIds were invalidated by recovery
+          const validDecs = invalidIds ? decs.filter(d => !invalidIds.has(d.instanceId)) : decs
+          if (validDecs.length > 0) {
+            animateDecoration(grid, validDecs, decComplete)
+          } else {
+            decComplete?.()
+          }
+        })
+        grid._decTweens.push(delayedCall)
       }
     } else if (isLast) {
       onComplete?.()
     }
 
     i++
-    setTimeout(step, delay)
+    if (i <= collapseOrder.length) {
+      const stepCall = gsap.delayedCall(delay / 1000, step)
+      grid._decTweens.push(stepCall)
+    }
   }
   step()
 }
@@ -254,21 +269,25 @@ export function animateDecoration(grid, items, onAllComplete) {
   const dummy = grid.dummy
   const list = Array.isArray(items) ? items : [items]
   const lastIdx = list.length - 1
+  const invalidIds = grid.decorations?._invalidDecIds
+
+  if (!grid._decTweens) grid._decTweens = []
 
   for (let j = 0; j < list.length; j++) {
     const item = list[j]
     const targetScale = item.scale ?? 1
-    const anim = { y: item.y + DEC_DROP_HEIGHT, scale: targetScale * 0.5 }
-    gsap.to(anim, {
+    const anim = { y: item.y + DEC_DROP_HEIGHT }
+    const tween = gsap.to(anim, {
       y: item.y,
-      scale: targetScale,
       duration: DEC_ANIM_DURATION,
       ease: 'power1.out',
       onUpdate: () => {
+        // Skip if this instance was invalidated by decoration repopulation
+        if (invalidIds?.has(item.instanceId)) { tween.kill(); return }
         try {
           dummy.position.set(item.x, anim.y, item.z)
           dummy.rotation.y = item.rotationY
-          dummy.scale.setScalar(anim.scale)
+          dummy.scale.setScalar(targetScale)
           dummy.updateMatrix()
           item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
         } catch (_) {
@@ -280,5 +299,6 @@ export function animateDecoration(grid, items, onAllComplete) {
         if (j === lastIdx) onAllComplete?.()
       }
     })
+    grid._decTweens.push(tween)
   }
 }

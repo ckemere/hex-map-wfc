@@ -507,7 +507,7 @@ export class HexMap {
         // Apply local results to neighbor grids
         const changedTilesPerGrid = this.applyTileResultsToGrids(localResult.tiles)
         for (const [g, tiles] of changedTilesPerGrid) {
-          g.decorations?.repopulateTilesAt(tiles, g.gridRadius, g.hexGrid)
+          g.decorations?.repopulateTilesAt(tiles, g.gridRadius, g.hexGrid, { animate: false })
         }
         this.addToGlobalCells('local-wfc', localResult.tiles)
         log(`[${ctx.gridKey}] Local-WFC re-solved ${localResult.tiles.length} cells`, 'color: blue')

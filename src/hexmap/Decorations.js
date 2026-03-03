@@ -99,13 +99,18 @@ export class Decorations {
     this.hills = []
     this.mountains = []
 
+    // Instance IDs invalidated by clearDecorationsAt (prevents stale animation tweens)
+    this._invalidDecIds = new Set()
+
     this.dummy = new Object3D()
   }
 
   // Safe addInstance — returns -1 if mesh is full
   _addInstance(mesh, geomId) {
     try {
-      return mesh.addInstance(geomId)
+      const id = mesh.addInstance(geomId)
+      this._invalidDecIds.delete(id)
+      return id
     } catch (_) {
       return -1
     }
@@ -799,6 +804,7 @@ export class Decorations {
     this.clearRocks()
     this.clearHills()
     this.clearMountains()
+    this._invalidDecIds.clear()
   }
 
   clearTrees() { this._clearInstances(this.trees, this.mesh); this.trees = [] }
@@ -866,7 +872,7 @@ export class Decorations {
    * @param {number} gridRadius - Grid radius for position calculation
    * @param {Array} hexGrid - 2D grid array for neighbor lookups (needed for buildings)
    */
-  repopulateTilesAt(tiles, gridRadius, hexGrid) {
+  repopulateTilesAt(tiles, gridRadius, hexGrid, { animate = true } = {}) {
     for (const tile of tiles) {
       this.clearDecorationsAt(tile.gridX, tile.gridZ)
     }
@@ -1107,14 +1113,16 @@ export class Decorations {
       }
     }
 
-    // Hide new items so they don't flash at final position before animation
-    for (const item of newItems) {
-      this.dummy.scale.setScalar(0)
-      this.dummy.updateMatrix()
-      item.mesh.setMatrixAt(item.instanceId, this.dummy.matrix)
+    if (animate) {
+      // Hide new items so they don't flash at final position before animation
+      for (const item of newItems) {
+        this.dummy.scale.setScalar(0)
+        this.dummy.updateMatrix()
+        item.mesh.setMatrixAt(item.instanceId, this.dummy.matrix)
+      }
     }
 
-    return newItems
+    return animate ? newItems : []
   }
 
   /**
@@ -1127,6 +1135,7 @@ export class Decorations {
       if (!mesh) return items
       return items.filter(item => {
         if (item.tile.gridX === gridX && item.tile.gridZ === gridZ) {
+          this._invalidDecIds.add(item.instanceId)
           mesh.deleteInstance(item.instanceId); return false
         }
         return true
