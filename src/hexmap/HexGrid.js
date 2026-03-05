@@ -337,6 +337,7 @@ export class HexGrid {
       gsap.killTweensOf(this.outline.material)
       this.outline.visible = false
       this._outlineFadeTimer = setTimeout(() => {
+        if (!this.outline) return
         this.outline.visible = true
         this.outline.material.opacity = 0
         gsap.to(this.outline.material, {

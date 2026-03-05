@@ -13,7 +13,6 @@ export class GUIManager {
   static defaultParams = {
     camera: {
       fov: 20,
-      flythrough: false,
     },
     lighting: {
       envIntensity: 0.95,
@@ -120,10 +119,6 @@ export class GUIManager {
       app.perspCamera.fov = v
       app.perspCamera.updateProjectionMatrix()
     })
-    gui.add(allParams.camera, 'flythrough').name('Flythrough').onChange((v) => {
-      app.toggleFlythrough(v)
-    })
-
 
     // Debug view
     const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6 }
@@ -133,7 +128,6 @@ export class GUIManager {
 
     // Visual toggles at top level
     gui.add(allParams.debug, 'originHelper').name('Axes Helpers').onChange((v) => {
-      if (app.axesHelper) app.axesHelper.visible = v
       app.city.setAxesHelpersVisible(v)
     })
     gui.add(allParams.debug, 'debugCam').name('Debug Cam').onChange((v) => {
@@ -200,8 +194,8 @@ export class GUIManager {
       import('./lib/Sounds.js').then(({ Sounds }) => Sounds.play('pop', 1.0, 0, 0.3))
       app.city.populateAllGrids()
     } }, 'buildAll').name('Build All (Single Solve)')
-    gui.add({ benchmark: () => app.city.runBenchmark(50) }, 'benchmark').name('Auto-Build (50 runs)')
-    gui.add({ benchmarkBA: () => app.city.runBuildAllBenchmark(50) }, 'benchmarkBA').name('Build-All (50 runs)')
+    gui.add({ benchmark: () => app.city.runBenchmark(50) }, 'benchmark').name('Modular (50 runs)')
+    gui.add({ benchmarkBA: () => app.city.runBuildAllBenchmark(50) }, 'benchmarkBA').name('Single Solve (50 runs)')
 
     gui.add({
       copyState: () => {
@@ -442,7 +436,6 @@ export class GUIManager {
     app.controls.maxPolarAngle = params.debug.debugCam ? Math.PI : 1.424
     app.controls.minDistance = params.debug.debugCam ? 0 : 25
     app.controls.maxDistance = params.debug.debugCam ? Infinity : 410
-    if (app.axesHelper) app.axesHelper.visible = params.debug.originHelper
     app.city.setAxesHelpersVisible(params.debug.originHelper)
 
     // Hex helper visibility

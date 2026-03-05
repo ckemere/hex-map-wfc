@@ -1,6 +1,5 @@
 import {
   Timer,
-  Group,
   OrthographicCamera,
   PerspectiveCamera,
   Vector2,
@@ -9,7 +8,6 @@ import {
   Plane,
   WebGPURenderer,
   PCFShadowMap,
-  AxesHelper,
 } from 'three/webgpu'
 import { OrbitControls, CSS2DRenderer } from 'three/examples/jsm/Addons.js'
 import Stats from 'three/addons/libs/stats.module.js'
@@ -261,16 +259,10 @@ export class App {
       }
     )
 
-    // Origin helper (hidden by default, toggled via GUI)
-    this.axesHelper = new AxesHelper(5)
-    this.axesHelper.position.set(0, 2, 0)
-    this.axesHelper.visible = false
-    this.scene.add(this.axesHelper)
-
-
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
     this.gui.init()
+    this.gui.gui.domElement.classList.add('gui-hidden')
     this.gui.applyParams()
 
     // Move FPS meter into GUI panel, above DPR
@@ -329,7 +321,7 @@ export class App {
     this.updateOrthoFrustum()
 
     // Set up perspective camera - top-down view of hex map
-    this.perspCamera.position.set(0.903, 100.036, 59.610)
+    this.perspCamera.position.set(0, 100, 58.5)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -355,7 +347,7 @@ export class App {
     this.controls.maxPolarAngle = 1.424
     // Pan parallel to ground plane instead of screen
     this.controls.screenSpacePanning = false
-    this.controls.target.set(0.903, 1, 1.168)
+    this.controls.target.set(0, 1, 0)
     this.controls.update()
   }
 
@@ -454,20 +446,20 @@ export class App {
     }
 
     const btnBase = `
-      height: 40px;
-      border-radius: 12px;
-      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.3);
       background: transparent;
-      color: white;
+      color: rgba(255,255,255,0.8);
       font-family: 'Inter', sans-serif;
-      font-size: 13px;
+      font-size: 12px;
       cursor: pointer;
       backdrop-filter: blur(4px);
-      padding: 0 16px;
-      text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+      padding: 8px 13px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.48);
     `
 
     const container = document.createElement('div')
+    container.id = 'ui-menu'
     container.style.cssText = `
       position: fixed;
       top: 10px;
@@ -483,11 +475,10 @@ export class App {
     const toggle = document.createElement('div')
     toggle.style.cssText = `
       display: flex;
-      border-radius: 12px;
-      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.3);
       background: transparent;
       overflow: hidden;
-      height: 40px;
       backdrop-filter: blur(4px);
     `
     const modeButtons = {}
@@ -501,15 +492,14 @@ export class App {
       const btn = document.createElement('button')
       btn.textContent = label
       btn.style.cssText = `
-        padding: 0 18px;
-        height: 100%;
+        padding: 8px 13px;
         border: none;
         background: ${key === 'move' ? 'rgba(255,255,255,0.3)' : 'transparent'};
-        color: white;
+        color: rgba(255,255,255,0.8);
         font-family: 'Inter', sans-serif;
-        font-size: 13px;
+        font-size: 12px;
         cursor: pointer;
-        text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+        text-shadow: 0 1px 3px rgba(0,0,0,0.48);
       `
       btn.addEventListener('mouseenter', () => { toggle.style.borderColor = 'rgba(255,255,255,0.7)' })
       btn.addEventListener('mouseleave', () => { toggle.style.borderColor = 'rgba(255,255,255,0.3)' })
@@ -538,8 +528,8 @@ export class App {
       { label: 'Clear All', action: () => {
         this.city.reset()
         this.city.setHelpersVisible(this.params.debug.hexGrid)
-        this.perspCamera.position.set(0.903, 100.036, 59.610)
-        this.controls.target.set(0.903, 1, 1.168)
+        this.perspCamera.position.set(0, 100, 58.5)
+        this.controls.target.set(0, 1, 0)
         this.controls.update()
       }},
     ]
@@ -561,7 +551,9 @@ export class App {
     const guiBtn = document.createElement('button')
     guiBtn.textContent = 'Controls'
     guiBtn.style.cssText = btnBase
-    let guiVisible = true
+    let guiVisible = false
+    const guiEl = this.gui?.gui?.domElement
+    if (guiEl) guiEl.classList.add('gui-hidden')
     const updateGuiBtn = () => {
       guiBtn.style.background = guiVisible ? 'rgba(255,255,255,0.3)' : 'transparent'
     }
@@ -573,7 +565,7 @@ export class App {
       const guiEl = this.gui?.gui?.domElement
       if (!guiEl) return
       guiVisible = !guiVisible
-      guiEl.style.display = guiVisible ? '' : 'none'
+      guiEl.classList.toggle('gui-hidden', !guiVisible)
       updateGuiBtn()
     })
     container.appendChild(guiBtn)
@@ -650,54 +642,6 @@ export class App {
     }
 
     this.stats.end()
-  }
-
-  toggleFlythrough(enabled) {
-    if (enabled) {
-      // Compute clone offset from actual grid positions
-      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
-      for (const grid of this.city.grids.values()) {
-        if (!grid.hexMesh) continue
-        const p = grid.group.position
-        if (p.x < minX) minX = p.x
-        if (p.x > maxX) maxX = p.x
-        if (p.z < minZ) minZ = p.z
-        if (p.z > maxZ) maxZ = p.z
-      }
-      // Span of grid centers + one grid diameter so clone sits edge-to-edge
-      const d = this.city.hexGridRadius * 2 + 1
-      const hexW = 2  // HEX_WIDTH
-      const hexH = 2 / Math.sqrt(3) * 2  // HEX_HEIGHT
-      const offsetX = maxX - minX + d * hexW
-      const offsetZ = maxZ - minZ + d * hexH * 0.75
-      console.log(`%c[FLYTHROUGH] offset: (${offsetX.toFixed(1)}, ${offsetZ.toFixed(1)})`, 'color: blue')
-
-      // Clone grid content at diagonal offset
-      const cloneBatched = (src) => {
-        const c = src.clone()
-        c._matricesTexture = src._matricesTexture
-        if (src._colorsTexture) c._colorsTexture = src._colorsTexture
-        if (src._indirectTexture) c._indirectTexture = src._indirectTexture
-        return c
-      }
-
-      this._flythroughClone = new Group()
-      this._flythroughClone.position.set(offsetX, 0, offsetZ)
-      for (const grid of this.city.grids.values()) {
-        if (!grid.hexMesh) continue
-        const g = new Group()
-        g.position.copy(grid.group.position)
-        g.add(cloneBatched(grid.hexMesh))
-        if (grid.decorations?.mesh) g.add(cloneBatched(grid.decorations.mesh))
-        this._flythroughClone.add(g)
-      }
-      this.scene.add(this._flythroughClone)
-    } else {
-      if (this._flythroughClone) {
-        this.scene.remove(this._flythroughClone)
-        this._flythroughClone = null
-      }
-    }
   }
 
   exportPNG({ format = 'image/jpeg', quality = 0.85, filename } = {}) {
