@@ -308,7 +308,7 @@ export class Decorations {
     const { x: offsetX, z: offsetZ } = this.worldOffset
     const buildingThreshold = getBuildingThreshold()
 
-    const deadEndTileIds = new Set()
+    const buildingTileIds = new Set()
 
     for (const tile of hexTiles) {
       // Check for road dead-ends - place building facing the road exit
@@ -316,7 +316,6 @@ export class Decorations {
       if (deadEndInfo.isDeadEnd) {
         const roadAngle = dirToAngle[deadEndInfo.exitDir] ?? 0
         deadEndCandidates.push({ tile, roadAngle })
-        deadEndTileIds.add(tile.id)
         continue
       }
 
@@ -394,6 +393,7 @@ export class Decorations {
       if (instanceId === -1) break
       trackUnique(meshName)
       this.buildings.push({ tile, meshName, instanceId, rotationY: roadAngle })
+      buildingTileIds.add(tile.id)
 
       // Optionally place tower top
       if (meshName === 'building_tower_A_yellow' && random() < TOWER_TOP_CHANCE) {
@@ -402,10 +402,10 @@ export class Decorations {
       }
     }
 
-    // Place noise-based village buildings (skip tiles already claimed by dead-end)
+    // Place noise-based village buildings (skip tiles already claimed)
     for (const { tile } of noiseCandidates) {
       if (this.buildings.length >= MAX_BUILDINGS - 1) break
-      if (deadEndTileIds.has(tile.id)) continue
+      if (buildingTileIds.has(tile.id)) continue
 
       const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
@@ -422,6 +422,7 @@ export class Decorations {
       if (instanceId === -1) break
       trackUnique(meshName)
       this.buildings.push({ tile, meshName, instanceId, rotationY: jitterAngle })
+      buildingTileIds.add(tile.id)
 
       // Optionally place tower top (same jitter as base)
       if (meshName === 'building_tower_A_yellow' && random() < TOWER_TOP_CHANCE) {
@@ -435,6 +436,7 @@ export class Decorations {
       const maxCoastWindmills = Math.min(1, coastWindmillCandidates.length)
       for (let i = 0; i < maxCoastWindmills; i++) {
         const { tile, roadAngle: waterAngle } = coastWindmillCandidates[i]
+        if (buildingTileIds.has(tile.id)) continue
         const localPos = HexTileGeometry.getWorldPosition(
           tile.gridX - gridRadius,
           tile.gridZ - gridRadius
@@ -445,6 +447,7 @@ export class Decorations {
         const baseInstanceId = this._placeInstance(this.mesh, this.geomIds, 'building_windmill_yellow', localPos.x, baseY, localPos.z, waterAngle, 1, tile.level)
         if (baseInstanceId === -1) break
         this.buildings.push({ tile, meshName: 'building_windmill_yellow', instanceId: baseInstanceId, rotationY: waterAngle, oy: 0 })
+        buildingTileIds.add(tile.id)
 
         // Place windmill top
         const cosA = Math.cos(waterAngle), sinA = Math.sin(waterAngle)
@@ -505,14 +508,16 @@ export class Decorations {
         if (!blocked) shipyardCandidates.push({ tile, waterAngle })
       }
       shuffle(shipyardCandidates)
-      if (shipyardCandidates.length > 0 && random() < 0.25) {
-        const { tile, waterAngle } = shipyardCandidates[0]
+      const validCandidates = shipyardCandidates.filter(c => !buildingTileIds.has(c.tile.id))
+      if (validCandidates.length > 0 && random() < 0.25) {
+        const { tile, waterAngle } = validCandidates[0]
         const localPos = HexTileGeometry.getWorldPosition(tile.gridX - gridRadius, tile.gridZ - gridRadius)
         const baseY = tile.level * LEVEL_HEIGHT + TILE_SURFACE
         const meshName = weightedPick(CoastBuildingDefs)
         const instanceId = this._placeInstance(this.mesh, this.geomIds, meshName, localPos.x, baseY, localPos.z, waterAngle, 1, tile.level)
         if (instanceId !== -1) {
           this.buildings.push({ tile, meshName, instanceId, rotationY: waterAngle })
+          buildingTileIds.add(tile.id)
         }
       }
     }
@@ -520,7 +525,6 @@ export class Decorations {
     // Place a rare building (henge/ruin/mine/fort) on flat grass at level 2+, max 1 per grid
     const availableRare = RareBuildingNames.filter(n => this.geomIds.has(n))
     if (availableRare.length > 0) {
-      const buildingTileIds = new Set(this.buildings.map(b => b.tile.id))
       const rareCandidates = []
       for (const tile of hexTiles) {
         if (tile.type !== TileType.GRASS) continue
