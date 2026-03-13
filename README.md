@@ -1,4 +1,6 @@
-This fork is a test of whether AI generated code can produce the modification that we want for water flow.
+This fork is a test of whether AI generated code can produce the modification that we want for water flow (using
+the Claude web api.)
+
 
 # Hex Map WFC
 
