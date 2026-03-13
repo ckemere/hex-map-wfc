@@ -259,7 +259,7 @@ export class HexMap {
   addToGlobalCells(gridKey, tiles) { this.wfcManager.addToGlobalCells(gridKey, tiles) }
   getFixedCellsForRegion(solveCells) { return this.wfcManager.getFixedCellsForRegion(solveCells) }
   getAnchorsForCell(fc, solveSet, fixedSet) { return this.wfcManager.getAnchorsForCell(fc, solveSet, fixedSet) }
-  getDefaultTileTypes() { return this.wfcManager.getDefaultTileTypes() }
+  getDefaultTileTypes(options) { return this.wfcManager.getDefaultTileTypes(options) }
 
   /** Apply WFC tile results to their source grids (replace tiles + collect changed tiles per grid) */
   applyTileResultsToGrids(tiles) {
@@ -402,7 +402,8 @@ export class HexMap {
       this.seededCells.add(`${co.col},${co.row}`)
     }
 
-    const tileTypes = this.getDefaultTileTypes()
+    const excludeRivers = App.instance?.params?.roads?.excludeRivers ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
     const anchorMap = new Map()
     for (const fc of fixedCells) {
       anchorMap.set(cubeKey(fc.q, fc.r, fc.s), this.getAnchorsForCell(fc, solveSet, fixedSet))
@@ -1137,7 +1138,8 @@ export class HexMap {
     }
 
     // ---- Single WFC solve (no fixed cells) ----
-    const tileTypes = this.getDefaultTileTypes()
+    const excludeRivers = params?.roads?.excludeRivers ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
     const result = await this.solveWfcAsync(allSolveCells, [], {
       tileTypes,
       weights: {},
@@ -1389,7 +1391,8 @@ export class HexMap {
     ).filter(c => this.globalCells.has(cubeKey(c.q, c.r, c.s)))
 
     const fixedCells = this.getFixedCellsForRegion(solveCells)
-    const tileTypes = this.getDefaultTileTypes()
+    const excludeRivers = App.instance?.params?.roads?.excludeRivers ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
 
     const result = await this.solveWfcAsync(solveCells, fixedCells, {
       tileTypes,
