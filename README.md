@@ -1,3 +1,5 @@
+This fork is a test of whether AI generated code can produce the modification that we want for water flow.
+
 # Hex Map WFC
 
 Procedural medieval island worlds from 4,100 hex tiles, built with WebGPU and a lot of backtracking.
