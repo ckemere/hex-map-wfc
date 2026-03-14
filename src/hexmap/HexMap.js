@@ -1279,6 +1279,7 @@ export class HexMap {
    * Called automatically after Build All / Auto-Build completes.
    */
   routeRivers() {
+    log(`[RIVERS] globalCells: ${this.globalCells.size}`, 'color: #3388ff')
     const router = new RiverRouter(this.globalCells)
     const { riverCells } = router.route()
 

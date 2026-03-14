@@ -72,7 +72,7 @@ export class RiverRouter {
    */
   constructor(globalCells, options = {}) {
     this.globalCells = globalCells
-    this.minSourceLevel = options.minSourceLevel ?? 3
+    this.minSourceLevel = options.minSourceLevel ?? 2
     this.minSourceDistance = options.minSourceDistance ?? 6
     this.noiseFreq = options.noiseFreq ?? 0.08
     this.maxSteps = options.maxSteps ?? 200
@@ -113,8 +113,11 @@ export class RiverRouter {
   _selectSources() {
     // Collect candidates: land cells at minSourceLevel or above
     const candidates = []
+    const levelCounts = new Map() // diagnostic
     for (const [key, cell] of this.globalCells) {
       const level = cellElevation(cell)
+      levelCounts.set(level, (levelCounts.get(level) || 0) + 1)
+
       if (level < this.minSourceLevel) continue
 
       // Exclude water/coast tiles
@@ -125,11 +128,20 @@ export class RiverRouter {
       const hasCoast = edgeVals.some(e => e === 'coast')
       if (isWater || hasCoast) continue
 
+      // Exclude tiles with river edges (already a river tile from WFC)
+      const hasRiver = edgeVals.some(e => e === 'river')
+      if (hasRiver) continue
+
       // Weight by elevation and noise
       const noise = coordNoise(cell.q, cell.r, this.noiseFreq)
       const weight = level * noise
       candidates.push({ key, cell, weight })
     }
+
+    // Log elevation distribution for debugging
+    const dist = [...levelCounts.entries()].sort((a, b) => a[0] - b[0])
+      .map(([l, c]) => `L${l}:${c}`).join(' ')
+    console.log(`[RIVERS] Elevation distribution: ${dist}, candidates (level≥${this.minSourceLevel}): ${candidates.length}`)
 
     // Sort by weight descending — greedily pick, enforcing min distance
     candidates.sort((a, b) => b.weight - a.weight)
