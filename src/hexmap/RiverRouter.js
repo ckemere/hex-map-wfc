@@ -2,12 +2,20 @@
  * RiverRouter — post-WFC river placement (Step 2 of the two-pass river system)
  *
  * After WFC completes, routes rivers downhill from high-elevation sources to
- * coast/water/map-edge using greedy descent in cube coordinates.
+ * coast/water/map-edge using BFS tree expansion in cube coordinates.
+ *
+ * Algorithm:
+ *   1. Select sources (highest elevation first)
+ *   2. For each source, expand a BFS tree outward through downhill/flat neighbors
+ *   3. When the tree reaches a goal (coast, edge, or existing river), trace
+ *      the parent pointers back to the source to extract the path
+ *   4. Commit the path into a shared globalOwned map so later rivers can
+ *      detect confluences
  *
  * Does NOT replace tiles yet — only computes paths for debug visualisation.
  */
 
-import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
+import { cubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
 import { TILE_LIST } from './HexTileData.js'
 import { random } from '../SeededRandom.js'
 
@@ -23,55 +31,113 @@ export const RiverCellType = {
   BASIN_END: 'basin_end',
 }
 
-/**
- * Effective elevation of a cell, accounting for slope tiles.
- * For a flat tile this is just cell.level (0–4).
- * For a slope tile we return the base level (low side) since that represents
- * the "floor" water sits on.
- */
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Effective elevation of a cell (base level, i.e. the low side of slopes). */
 function cellElevation(cell) {
   return cell.level
 }
 
-/**
- * Get the effective elevation a neighbor sees across the shared edge.
- * This accounts for slopes: a slope tile's edge level may be higher than its
- * base level on the "high" side.
- */
+/** Edge level on a given side of a cell, accounting for slope rotation. */
 function edgeLevelAt(cell, dirIndex) {
   const dirName = CUBE_DIRS[dirIndex].name
   return getEdgeLevel(cell.type, cell.rotation, dirName, cell.level)
 }
 
-/**
- * Simple 2D value noise for source probability weighting.
- * Uses a hash of cube coordinates to produce a [0,1) value.
- */
+/** Simple hash-based noise in [0,1) for source weighting. */
 function coordNoise(q, r, freq) {
-  // Simple hash-based noise
   const x = q * freq
   const z = r * freq
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
   return n - Math.floor(n)
 }
 
+// ---------------------------------------------------------------------------
+// Min-heap priority queue (binary heap, smallest cost first)
+// ---------------------------------------------------------------------------
+
+class MinHeap {
+  constructor() { this._data = [] }
+
+  get size() { return this._data.length }
+
+  push(item) {
+    this._data.push(item)
+    this._bubbleUp(this._data.length - 1)
+  }
+
+  pop() {
+    const top = this._data[0]
+    const last = this._data.pop()
+    if (this._data.length > 0) {
+      this._data[0] = last
+      this._sinkDown(0)
+    }
+    return top
+  }
+
+  _bubbleUp(i) {
+    while (i > 0) {
+      const parent = (i - 1) >> 1
+      if (this._data[i].cost < this._data[parent].cost) {
+        [this._data[i], this._data[parent]] = [this._data[parent], this._data[i]]
+        i = parent
+      } else break
+    }
+  }
+
+  _sinkDown(i) {
+    const n = this._data.length
+    while (true) {
+      let smallest = i
+      const l = 2 * i + 1, r = 2 * i + 2
+      if (l < n && this._data[l].cost < this._data[smallest].cost) smallest = l
+      if (r < n && this._data[r].cost < this._data[smallest].cost) smallest = r
+      if (smallest === i) break
+      ;[this._data[i], this._data[smallest]] = [this._data[smallest], this._data[i]]
+      i = smallest
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Goal types returned by the BFS expansion
+// ---------------------------------------------------------------------------
+
+const GoalType = {
+  COAST: 'coast',
+  EDGE: 'edge',
+  CONFLUENCE: 'confluence',
+}
+
+// Goal preference: lower = better
+const GOAL_PRIORITY = { [GoalType.COAST]: 0, [GoalType.CONFLUENCE]: 1, [GoalType.EDGE]: 2 }
+
+// ---------------------------------------------------------------------------
+// RiverRouter
+// ---------------------------------------------------------------------------
+
 export class RiverRouter {
   /**
    * @param {Map} globalCells — HexMap.globalCells (cubeKey → cell)
    * @param {Object} [options]
-   * @param {number} [options.minSourceLevel=3]     — minimum cell level for source placement
-   * @param {number} [options.minSourceDistance=6]   — minimum hex distance between sources
-   * @param {number} [options.noiseFreq=0.08]        — frequency of source probability noise
-   * @param {number} [options.maxSteps=200]          — discard river if it exceeds this many steps
-   * @param {number} [options.jitter=0.3]            — noise amplitude added to neighbor elevation for meanders
+   * @param {number} [options.minSourceLevel=2]       — minimum cell level for source placement
+   * @param {number} [options.minSourceDistance=6]     — minimum hex distance between sources
+   * @param {number} [options.noiseFreq=0.08]          — frequency of source probability noise
+   * @param {number} [options.maxExpansion=600]        — max cells expanded per river BFS
+   * @param {number} [options.distanceCost=0.15]       — per-step cost to prefer shorter paths
+   * @param {number} [options.edgePenalty=2.0]         — cost penalty per missing neighbor (edge proximity)
    */
   constructor(globalCells, options = {}) {
     this.globalCells = globalCells
     this.minSourceLevel = options.minSourceLevel ?? 2
     this.minSourceDistance = options.minSourceDistance ?? 6
     this.noiseFreq = options.noiseFreq ?? 0.08
-    this.maxSteps = options.maxSteps ?? 200
-    this.jitter = options.jitter ?? 0.3
+    this.maxExpansion = options.maxExpansion ?? 600
+    this.distanceCost = options.distanceCost ?? 0.15
+    this.edgePenalty = options.edgePenalty ?? 2.0
 
     /** @type {Map<string, { type: string, riverIndex: number }>} cubeKey → river cell info */
     this.riverCells = new Map()
@@ -88,7 +154,6 @@ export class RiverRouter {
     this.riverCells.clear()
     this.rivers.length = 0
 
-    // Dump a sample cell for debugging
     const firstEntry = this.globalCells.entries().next().value
     if (firstEntry) {
       const [k, v] = firstEntry
@@ -97,8 +162,13 @@ export class RiverRouter {
 
     const sources = this._selectSources()
     console.warn(`[RIVERS] Sources selected: ${sources.length}`)
+
+    // globalOwned: cells committed to finalized river paths.
+    // Separate from riverCells so that per-river BFS trees don't interfere.
+    const globalOwned = new Map()
+
     for (let i = 0; i < sources.length; i++) {
-      this._routeRiver(sources[i], i)
+      this._routeRiver(sources[i], i, globalOwned)
     }
 
     console.warn(`[RIVERS] Routed ${this.rivers.length} rivers, ${this.riverCells.size} cells`)
@@ -106,58 +176,41 @@ export class RiverRouter {
   }
 
   // ---------------------------------------------------------------------------
-  // Source selection
+  // Source selection (unchanged from greedy version)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Select river source cells among high-elevation land cells, weighted by a
-   * noise field and enforcing a minimum distance between sources.
-   * @returns {string[]} array of cubeKey strings
-   */
   _selectSources() {
-    // Collect candidates: land cells at minSourceLevel or above
     const candidates = []
-    const levelCounts = new Map() // diagnostic
+    const levelCounts = new Map()
     for (const [key, cell] of this.globalCells) {
       const level = cellElevation(cell)
       levelCounts.set(level, (levelCounts.get(level) || 0) + 1)
 
       if (level < this.minSourceLevel) continue
 
-      // Exclude water/coast tiles
       const def = TILE_LIST[cell.type]
       if (!def) continue
       const edgeVals = Object.values(def.edges)
-      const isWater = edgeVals.every(e => e === 'water')
-      const hasCoast = edgeVals.some(e => e === 'coast')
-      if (isWater || hasCoast) continue
-
-      // Exclude tiles with river edges (already a river tile from WFC)
-      const hasRiver = edgeVals.some(e => e === 'river')
-      if (hasRiver) continue
-
-      // Exclude cells near the map edge (rivers starting at the edge look bad)
+      if (edgeVals.every(e => e === 'water')) continue
+      if (edgeVals.some(e => e === 'coast')) continue
+      if (edgeVals.some(e => e === 'river')) continue
       if (this._countEdgeNeighbors(cell.q, cell.r, cell.s) > 0) continue
 
-      // Weight by elevation and noise
       const noise = coordNoise(cell.q, cell.r, this.noiseFreq)
       const weight = level * noise
       candidates.push({ key, cell, weight })
     }
 
-    // Log elevation distribution for debugging
     const dist = [...levelCounts.entries()].sort((a, b) => a[0] - b[0])
       .map(([l, c]) => `L${l}:${c}`).join(' ')
     console.warn(`[RIVERS] Elevation distribution: ${dist}, candidates (level≥${this.minSourceLevel}): ${candidates.length}`)
 
-    // Sort by weight descending — greedily pick, enforcing min distance
     candidates.sort((a, b) => b.weight - a.weight)
 
     const sources = []
-    const sourceCoords = [] // {q,r,s} for distance checks
+    const sourceCoords = []
 
     for (const { key, cell } of candidates) {
-      // Check minimum distance from already-selected sources
       let tooClose = false
       for (const sc of sourceCoords) {
         if (cubeDistance(cell.q, cell.r, cell.s, sc.q, sc.r, sc.s) < this.minSourceDistance) {
@@ -175,30 +228,53 @@ export class RiverRouter {
   }
 
   // ---------------------------------------------------------------------------
-  // Flow routing
+  // BFS tree expansion
   // ---------------------------------------------------------------------------
 
   /**
-   * Route a single river from source downhill until termination.
-   * @param {string} sourceKey — cubeKey of source cell
-   * @param {number} riverIndex — index of this river (for confluence detection)
+   * Route a single river by expanding a BFS tree from the source.
+   * The tree grows through downhill and flat neighbors. When a goal is
+   * reached (coast, map edge, or existing river), trace the parent pointers
+   * back to the source to extract the river path.
+   *
+   * @param {string} sourceKey
+   * @param {number} riverIndex
+   * @param {Map} globalOwned — cells committed by previously routed rivers
    */
-  _routeRiver(sourceKey, riverIndex) {
-    const path = [sourceKey]
-    let endType = RiverCellType.BASIN_END // default if we get stuck
+  _routeRiver(sourceKey, riverIndex, globalOwned) {
+    const source = this.globalCells.get(sourceKey)
+    if (!source) return
 
-    // Mark source
-    this.riverCells.set(sourceKey, { type: RiverCellType.SOURCE, riverIndex })
+    // Per-river BFS state
+    const cameFrom = new Map()   // key → parentKey (null for source)
+    const costSoFar = new Map()  // key → best cost to reach this cell
+    const frontier = new MinHeap()
 
-    let currentKey = sourceKey
-    let prevDirIndex = -1 // direction we came from (for momentum tiebreaker)
+    cameFrom.set(sourceKey, null)
+    costSoFar.set(sourceKey, 0)
+    frontier.push({ key: sourceKey, cost: 0 })
 
-    for (let step = 0; step < this.maxSteps; step++) {
+    // Collect all goals reached during expansion
+    // { goalKey, goalType, traceTo } where traceTo is the last cell in our
+    // tree (for edge/confluence, the cell before the goal)
+    const goals = []
+
+    let expanded = 0
+
+    while (frontier.size > 0 && expanded < this.maxExpansion) {
+      const { key: currentKey, cost: currentCost } = frontier.pop()
+
+      // Skip if we already found a better path to this cell
+      if (currentCost > costSoFar.get(currentKey)) continue
+
+      expanded++
+
       const current = this.globalCells.get(currentKey)
-      if (!current) break
+      if (!current) continue
 
-      // Evaluate all 6 neighbors
-      const neighbors = []
+      const currentElev = cellElevation(current)
+
+      // Expand all 6 neighbors
       for (let d = 0; d < 6; d++) {
         const dir = CUBE_DIRS[d]
         const nq = current.q + dir.dq
@@ -207,9 +283,18 @@ export class RiverRouter {
         const nk = cubeKey(nq, nr, ns)
         const neighbor = this.globalCells.get(nk)
 
+        // --- Map edge: goal, don't expand further ---
         if (!neighbor) {
-          // Map edge — valid termination
-          neighbors.push({ key: nk, dirIndex: d, elev: -Infinity, isEdge: true, isWater: false, isCoast: false })
+          goals.push({ goalKey: nk, goalType: GoalType.EDGE, traceTo: currentKey, cost: currentCost })
+          continue
+        }
+
+        // --- Already in our own tree: skip (prevents loops) ---
+        if (cameFrom.has(nk)) continue
+
+        // --- Owned by a previous river: confluence goal ---
+        if (globalOwned.has(nk)) {
+          goals.push({ goalKey: nk, goalType: GoalType.CONFLUENCE, traceTo: currentKey, cost: currentCost })
           continue
         }
 
@@ -220,168 +305,116 @@ export class RiverRouter {
         const isWater = edgeVals.every(e => e === 'water')
         const hasCoast = edgeVals.some(e => e === 'coast')
 
-        // Edge-aware elevation comparison:
-        // exitEdgeLevel = the level on the current cell's side of this edge
-        // entryEdgeLevel = the level on the neighbor's side (opposite direction)
+        // --- Coast/water: goal, don't expand further ---
+        if (isWater || hasCoast) {
+          goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          continue
+        }
+
+        // --- Elevation check: only expand to downhill or flat ---
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
-
-        // The river can cross this edge if the neighbor's entry edge is not
-        // higher than the current cell's exit edge. Use the max of
-        // (neighbor base level, entry edge level) as the effective elevation
-        // the river must overcome. This prevents rivers from crossing from a
-        // flat tile onto the high side of a slope (and thence to a hill).
         const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
 
-        neighbors.push({
-          key: nk,
-          dirIndex: d,
-          elev: effectiveElev,
-          exitEdgeLevel,
-          isEdge: false,
-          isWater,
-          isCoast: hasCoast,
-          edgeAdjacentCount: this._countEdgeNeighbors(nq, nr, ns),
-        })
+        // Only allow downhill or flat (relative to exit edge)
+        if (effectiveElev > exitEdgeLevel) continue
+
+        // --- Compute cost to reach this neighbor ---
+        let stepCost = effectiveElev + this.distanceCost
+
+        // Penalize edge-adjacent cells
+        const edgeCount = this._countEdgeNeighbors(nq, nr, ns)
+        if (edgeCount > 0) {
+          stepCost += this.edgePenalty * edgeCount
+        }
+
+        const newCost = currentCost + stepCost
+
+        // Only expand if this is a better path
+        if (!costSoFar.has(nk) || newCost < costSoFar.get(nk)) {
+          costSoFar.set(nk, newCost)
+          cameFrom.set(nk, currentKey)
+          frontier.push({ key: nk, cost: newCost })
+        }
       }
-
-      // --- Termination checks ---
-
-      // Check for coast or water neighbors (prefer these as endpoints)
-      const coastOrWater = neighbors.filter(n => !n.isEdge && (n.isWater || n.isCoast))
-      if (coastOrWater.length > 0) {
-        // Pick the closest coast/water
-        const target = coastOrWater[0]
-        path.push(target.key)
-        endType = RiverCellType.COAST_END
-        this.riverCells.set(target.key, { type: RiverCellType.COAST_END, riverIndex })
-        break
-      }
-
-      // Check for map edge
-      const edgeNeighbors = neighbors.filter(n => n.isEdge)
-
-      // --- Pick best downhill neighbor ---
-      const validNeighbors = neighbors.filter(n => !n.isEdge && !n.isWater && !n.isCoast)
-
-      // Partition using edge-aware elevation comparison per direction.
-      // Each neighbor has its own exitEdgeLevel (the level on the current cell's
-      // side of that edge). A neighbor is "downhill" if its effective elevation
-      // is strictly less than the exit edge we'd cross to reach it.
-      const downhill = validNeighbors.filter(n => n.elev < n.exitEdgeLevel)
-      const flat = validNeighbors.filter(n => n.elev === n.exitEdgeLevel)
-
-      let best = null
-
-      if (downhill.length > 0) {
-        best = this._pickBest(downhill, prevDirIndex)
-      } else if (flat.length > 0) {
-        best = this._pickBest(flat, prevDirIndex)
-      } else if (edgeNeighbors.length > 0) {
-        // All land neighbors are uphill — flow off edge
-        path.push(edgeNeighbors[0].key)
-        endType = RiverCellType.EDGE_END
-        break
-      } else {
-        // Landlocked basin — no downhill, no flat, no edge
-        endType = RiverCellType.BASIN_END
-        this.riverCells.set(currentKey, { type: RiverCellType.BASIN_END, riverIndex })
-        break
-      }
-
-      if (!best) {
-        endType = RiverCellType.BASIN_END
-        break
-      }
-
-      // --- Confluence check ---
-      const existing = this.riverCells.get(best.key)
-      if (existing && existing.riverIndex !== riverIndex) {
-        // Merge into existing river
-        path.push(best.key)
-        endType = RiverCellType.CONFLUENCE
-        this.riverCells.set(best.key, { type: RiverCellType.CONFLUENCE, riverIndex: existing.riverIndex })
-        break
-      }
-
-      // --- Loop detection ---
-      if (this.riverCells.has(best.key) && this.riverCells.get(best.key).riverIndex === riverIndex) {
-        // Would loop into our own path — terminate as basin
-        endType = RiverCellType.BASIN_END
-        this.riverCells.set(currentKey, { type: RiverCellType.BASIN_END, riverIndex })
-        break
-      }
-
-      // Advance
-      path.push(best.key)
-      this.riverCells.set(best.key, { type: RiverCellType.PATH, riverIndex })
-      prevDirIndex = best.dirIndex
-      currentKey = best.key
     }
 
-    // If we hit maxSteps, discard the river
-    if (path.length >= this.maxSteps) {
-      for (const key of path) {
-        this.riverCells.delete(key)
-      }
+    // --- Pick the best goal ---
+    if (goals.length === 0) {
+      // No goal reached — basin end at source
+      this.riverCells.set(sourceKey, { type: RiverCellType.BASIN_END, riverIndex })
+      this.rivers.push({ source: sourceKey, path: [sourceKey], endType: RiverCellType.BASIN_END })
+      globalOwned.set(sourceKey, { riverIndex })
       return
+    }
+
+    // Sort goals: prefer coast > confluence > edge, then by cost
+    goals.sort((a, b) => {
+      const pa = GOAL_PRIORITY[a.goalType], pb = GOAL_PRIORITY[b.goalType]
+      if (pa !== pb) return pa - pb
+      return a.cost - b.cost
+    })
+
+    const bestGoal = goals[0]
+
+    // --- Trace path from goal back to source ---
+    const path = []
+    let traceKey = bestGoal.traceTo
+    while (traceKey !== null) {
+      path.push(traceKey)
+      traceKey = cameFrom.get(traceKey)
+    }
+    path.reverse() // now source → ... → cell-before-goal
+
+    // Determine end type and mark cells
+    let endType
+    switch (bestGoal.goalType) {
+      case GoalType.COAST:
+        endType = RiverCellType.COAST_END
+        break
+      case GoalType.EDGE:
+        endType = RiverCellType.EDGE_END
+        break
+      case GoalType.CONFLUENCE:
+        endType = RiverCellType.CONFLUENCE
+        break
+    }
+
+    // Mark source
+    this.riverCells.set(path[0], { type: RiverCellType.SOURCE, riverIndex })
+    globalOwned.set(path[0], { riverIndex })
+
+    // Mark intermediate path cells
+    for (let i = 1; i < path.length; i++) {
+      this.riverCells.set(path[i], { type: RiverCellType.PATH, riverIndex })
+      globalOwned.set(path[i], { riverIndex })
+    }
+
+    // Mark the goal cell itself
+    const goalKey = bestGoal.goalKey
+    if (endType === RiverCellType.COAST_END) {
+      path.push(goalKey)
+      this.riverCells.set(goalKey, { type: RiverCellType.COAST_END, riverIndex })
+      globalOwned.set(goalKey, { riverIndex })
+    } else if (endType === RiverCellType.CONFLUENCE) {
+      path.push(goalKey)
+      // Mark the confluence cell — keep the original river's ownership
+      this.riverCells.set(goalKey, { type: RiverCellType.CONFLUENCE, riverIndex: globalOwned.get(goalKey).riverIndex })
+    } else if (endType === RiverCellType.EDGE_END) {
+      // Edge cell is off-map, just mark the last real cell
+      path.push(goalKey)
     }
 
     this.rivers.push({ source: sourceKey, path, endType })
   }
 
-  /**
-   * Pick the best neighbor from a list, using momentum and jitter tiebreakers.
-   * @param {Array} candidates — neighbor objects with { key, dirIndex, elev }
-   * @param {number} prevDirIndex — direction index we came from (-1 if none)
-   * @returns {Object|null} best candidate
-   */
-  _pickBest(candidates, prevDirIndex) {
-    if (candidates.length === 0) return null
-    if (candidates.length === 1) return candidates[0]
-
-    // Score each candidate: lower is better
-    // Base score = elevation
-    // Momentum bonus: subtract a small amount if continuing in same direction
-    // Jitter: add noise to break ties
-    let bestScore = Infinity
-    let best = null
-
-    for (const c of candidates) {
-      let score = c.elev
-
-      // Momentum: prefer continuing same direction
-      if (prevDirIndex >= 0 && c.dirIndex === prevDirIndex) {
-        score -= 0.4
-      }
-      // Slight preference for adjacent directions (gentle curves)
-      if (prevDirIndex >= 0) {
-        const diff = Math.abs(c.dirIndex - prevDirIndex)
-        const angleDist = Math.min(diff, 6 - diff)
-        if (angleDist === 1) score -= 0.2
-      }
-
-      // Penalize cells near the map edge to prevent edge-hugging
-      if (c.edgeAdjacentCount > 0) {
-        score += 2.0 * c.edgeAdjacentCount
-      }
-
-      // Jitter
-      score += (random() - 0.5) * this.jitter
-
-      if (score < bestScore) {
-        bestScore = score
-        best = c
-      }
-    }
-
-    return best
-  }
+  // ---------------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------------
 
   /**
    * Count how many of a cell's 6 neighbors are off the map edge.
-   * Used to penalize edge-adjacent cells during routing.
    */
   _countEdgeNeighbors(q, r, s) {
     let count = 0
