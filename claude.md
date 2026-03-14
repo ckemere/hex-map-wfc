@@ -9,12 +9,10 @@ Original article: https://felixturner.github.io/hex-map-wfc/article/
   Multiplies the WFC selection weight of any tile with `highEdges` at collapse
   time, making terrain more or less mountainous without changing constraint rules.
   Lives in `allParams.roads.slopeBias`, passed through WFCManager into the worker.
-- Removed river tiles from WFC solve behind an `excludeRivers` option (merged).
-- Removed road tiles from WFC solve behind an `excludeRoads` option (merged).
-
-- **Excluded rivers from WFC** (Step 1 complete).
-  River tiles are filtered out of the WFC solve when `excludeRivers` is true.
-  The map generates cleanly with only land/coast/water/slope tiles.
+- River and road tiles excluded from WFC by default. GUI toggles
+  `includeRiversInWFC` / `includeRoadsInWFC` (default false) let you re-enable
+  them for debugging. Rivers are placed post-WFC by RiverRouter; roads will be
+  placed post-WFC by a future RoadRouter.
 
 - **BFS-based river routing** (Step 2 complete — routing only, no tile replacement yet).
   `RiverRouter` runs as a post-WFC pass. Routes rivers downhill from high-elevation
@@ -42,13 +40,11 @@ The original WFC includes river tiles in the solve, which causes three problems:
 
 ## Development plan
 
-### Step 1 — Remove rivers from WFC ✅ DONE
-River tiles excluded from solve behind `excludeRivers` boolean option.
+### Step 1 — Remove rivers/roads from WFC ✅ DONE
+River and road tiles excluded from solve by default. GUI toggles
+`includeRiversInWFC` / `includeRoadsInWFC` re-enable them for debugging.
 
-### Step 2 — Remove roads from WFC ✅ DONE
-Road tiles excluded from solve behind `excludeRoads` boolean option.
-
-## Step 3 — River routing algorithm ✅ DONE
+## Step 2 — River routing algorithm ✅ DONE
 Post-WFC second pass using solved elevation data from `globalCells`.
 
 ### Architecture
@@ -111,13 +107,21 @@ ensures rivers never run side-by-side on flat terrain.
 
 ---
 
-## Step 3 remaining work: tile replacement
+## Step 3 — Tile replacement (in progress)
 
-Local re-solve. When placing a river tile, run a mini WFC on a small radius
-around the target cell, seeded with the river entry/exit face directions as hard
-constraints. Use noise-weighted tile selection during this local solve, biased
-toward river-compatible tiles. This reuses the existing Local-WFC recovery
-mechanism already present in the codebase.
+### Direct replacement
+`computeReplacements()` selects the best river tile + rotation for each cell in
+the routed path. Uses `selectRiverTile(dirs)` which matches needed river edge
+directions against the TILE_LIST. Coast-end cells try `_selectCoastTile()` which
+validates RIVER_INTO_COAST edges against all 6 neighbors.
+
+### Local WFC re-solve for coast endpoints
+When RIVER_INTO_COAST can't be placed directly (edge constraints don't match
+surrounding tiles), `_resolveCoastEndpoints()` runs a radius-2 local WFC re-solve
+centered on the coast cell. The solver has river tiles enabled and uses:
+- `initialCollapses` to force the last land cell to its assigned river tile
+- Boundary fixed cells (including upstream river tiles already placed)
+- The WFC naturally finds RIVER_INTO_COAST and reshapes local coastline geometry
 
 ---
 
@@ -127,33 +131,30 @@ mechanism already present in the codebase.
   one edge `'river'`. Road tiles have at least one edge `'road'`. Slope/cliff
   tiles have `highEdges` array.
 - `src/workers/wfc.worker.js` — WFC solver. `tileTypes` option array controls
-  which tiles are eligible. `excludeRivers` and `excludeRoads` are the model
-  for any further exclusions.
+  which tiles are eligible.
 - `src/hexmap/WFCManager.js` — orchestrates solves, passes options to worker.
   `runWfcAttempt` is where per-solve options are assembled.
+  `getDefaultTileTypes({ excludeRivers, excludeRoads })` filters tile types.
 - `src/hexmap/HexMap.js` — `populateGrid` and `populateAllGrids` are the two
   solve entry points. `globalCells` is the post-solve Map of all placed tiles,
   keyed by cube coordinate string, each entry has `type`, `rotation`, `level`.
-  After WFC, calls `RiverRouter.route()` and updates `RiverDebugOverlay`.
+  After WFC, calls `routeRivers()` (async) which runs RiverRouter, applies tile
+  replacements, and does local WFC re-solves for coast endpoints.
 - `src/hexmap/RiverRouter.js` — BFS-based river routing. Exports `RiverRouter`
-  class and `RiverCellType` enum.
+  class and `RiverCellType` enum. `computeReplacements()` returns both direct
+  replacements and `coastResolves` for cells needing local WFC.
 - `src/hexmap/RiverDebugOverlay.js` — debug visualisation of routed rivers.
   Colored hex fills rendered as a Three.js mesh overlay.
 - `src/hexmap/HexWFCCore.js` — cube coordinate helpers (`cubeKey`, `CUBE_DIRS`,
   `cubeDistance`), adjacency rules, `getEdgeLevel` for slope-aware edge levels.
 - `src/GUI.js` — all GUI parameters. Generation-time params go in
   `allParams.roads`. Visual/shader params go in `allParams.debug`.
+  `includeRiversInWFC` / `includeRoadsInWFC` (default false) control whether
+  river/road tiles are included in the initial WFC solve.
 
 ### River tile names to be aware of
 `RIVER_A`, `RIVER_B`, `RIVER_C`, `RIVER_END`, `RIVER_A_SLOPE_LOW`,
 `RIVER_INTO_COAST`, `RIVER_CROSSING_A`, `RIVER_CROSSING_B`
-  keyed by cube coordinate string, each with `type`, `rotation`, `level`.
-- `src/hexmap/HexMapDebug.js` — `repopulateDecorations()` iterates all grids.
-- `src/GUI.js` — all GUI parameters. Generation-time params go in
-  `allParams.roads`. Visual/shader params go in `allParams.debug`.
-- `src/hexmap/Decorations.js` — tree, building, waterlily, bridge placement.
-  Currently tied to tile types — will need updating as pipeline evolves.
-- `src/hexmap/HexWFCCore.js` — cube coordinate helpers, adjacency rules.
 
 ### Road Tile names to be aware of
 **Road:** `ROAD_A`, `ROAD_B`, `ROAD_D`, `ROAD_E`, `ROAD_F`, `ROAD_END`,
@@ -162,7 +163,7 @@ mechanism already present in the codebase.
 ---
 
 ## Conventions
-- New options follow the pattern established by `excludeRivers` and `slopeBias`
+- New options follow the pattern established by `includeRiversInWFC` and `slopeBias`
 - Always pass new options through the full chain:
   GUI → HexMap context → WFCManager → solveWfcAsync options → worker
 - Do not re-seed the WFC worker RNG per solve (breaks determinism)

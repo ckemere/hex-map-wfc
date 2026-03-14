@@ -63,8 +63,8 @@ export class GUIManager {
     roads: {
       animateWFC: true,
       showOutlines: false,
-      excludeRivers: false,
-      excludeRoads: false,
+      includeRiversInWFC: false,
+      includeRoadsInWFC: false,
     },
     decoration: {
       treeNoiseFreq: 0.05,
@@ -183,8 +183,8 @@ export class GUIManager {
     })
     allParams.roads.slopeBias = 1.0
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
-    gui.add(allParams.roads, 'excludeRivers').name('Exclude Rivers')
-    gui.add(allParams.roads, 'excludeRoads').name('Exclude Roads')
+    gui.add(allParams.roads, 'includeRiversInWFC').name('Rivers in WFC')
+    gui.add(allParams.roads, 'includeRoadsInWFC').name('Roads in WFC')
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
