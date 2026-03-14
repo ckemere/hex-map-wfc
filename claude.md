@@ -9,6 +9,8 @@ Original article: https://felixturner.github.io/hex-map-wfc/article/
   Multiplies the WFC selection weight of any tile with `highEdges` at collapse
   time, making terrain more or less mountainous without changing constraint rules.
   Lives in `allParams.roads.slopeBias`, passed through WFCManager into the worker.
+- Removed river tiles from WFC solve behind an `excludeRivers` option (merged).
+- Removed road tiles from WFC solve behind an `excludeRoads` option (merged).
 
 - **Excluded rivers from WFC** (Step 1 complete).
   River tiles are filtered out of the WFC solve when `excludeRivers` is true.
@@ -29,24 +31,25 @@ The original WFC includes river tiles in the solve, which causes three problems:
 - Rivers can flow uphill or cross elevation levels illogically
 - Rivers don't reliably terminate in bodies of water
 
-### Development plan
-
-**Step 1 — Remove rivers from WFC** ✓
-Exclude all river tile types from the WFC solve entirely. Controlled by
-`excludeRivers` boolean option passed through GUI → HexMap → WFCManager → worker.
-
-**Step 2 — Rule-based river placement (second pass)** ✓ (routing done, tile replacement pending)
-After WFC completes, routes rivers using the solved elevation data (`globalCells`).
-Currently produces path data consumed by the debug overlay. Tile replacement is
-the remaining work item.
-
-**Step 3 — Lake generation (third pass)**
-Find all `BASIN_END` cells from Step 2 (landlocked basins where water had nowhere
-to go). Flood-fill the surrounding topology to generate bodies of water.
+1. **Terrain** — WFC only. No road tiles, no river tiles.
+2. **Rivers** — rule-based second pass using elevation data from phase 1.
+3. **Lakes** — flood-fill from RIVER_END markers left by phase 2.
+4. **Settlements** — noise + proximity scoring after water features are known.
+5. **Roads** — pathfinding between settlements, crossing rivers at valid points.
+6. **Decorations** — trees, buildings, waterlilies as a single final pass.
 
 ---
 
-## Step 2 — River routing algorithm
+## Development plan
+
+### Step 1 — Remove rivers from WFC ✅ DONE
+River tiles excluded from solve behind `excludeRivers` boolean option.
+
+### Step 2 — Remove roads from WFC ✅ DONE
+Road tiles excluded from solve behind `excludeRoads` boolean option.
+
+## Step 3 — River routing algorithm ✅ DONE
+Post-WFC second pass using solved elevation data from `globalCells`.
 
 ### Architecture
 `RiverRouter` (`src/hexmap/RiverRouter.js`) takes `globalCells` and produces:
@@ -108,7 +111,7 @@ ensures rivers never run side-by-side on flat terrain.
 
 ---
 
-## Step 2 remaining work: tile replacement
+## Step 3 remaining work: tile replacement
 
 Local re-solve. When placing a river tile, run a mini WFC on a small radius
 around the target cell, seeded with the river entry/exit face directions as hard
@@ -121,9 +124,11 @@ mechanism already present in the codebase.
 ## Codebase orientation
 
 - `src/hexmap/HexTileData.js` — all tile definitions. River tiles have at least
-  one edge with value `'river'`. Slope/cliff tiles have `highEdges` array.
+  one edge `'river'`. Road tiles have at least one edge `'road'`. Slope/cliff
+  tiles have `highEdges` array.
 - `src/workers/wfc.worker.js` — WFC solver. `tileTypes` option array controls
-  which tiles are eligible for the solve.
+  which tiles are eligible. `excludeRivers` and `excludeRoads` are the model
+  for any further exclusions.
 - `src/hexmap/WFCManager.js` — orchestrates solves, passes options to worker.
   `runWfcAttempt` is where per-solve options are assembled.
 - `src/hexmap/HexMap.js` — `populateGrid` and `populateAllGrids` are the two
@@ -142,12 +147,27 @@ mechanism already present in the codebase.
 ### River tile names to be aware of
 `RIVER_A`, `RIVER_B`, `RIVER_C`, `RIVER_END`, `RIVER_A_SLOPE_LOW`,
 `RIVER_INTO_COAST`, `RIVER_CROSSING_A`, `RIVER_CROSSING_B`
+  keyed by cube coordinate string, each with `type`, `rotation`, `level`.
+- `src/hexmap/HexMapDebug.js` — `repopulateDecorations()` iterates all grids.
+- `src/GUI.js` — all GUI parameters. Generation-time params go in
+  `allParams.roads`. Visual/shader params go in `allParams.debug`.
+- `src/hexmap/Decorations.js` — tree, building, waterlily, bridge placement.
+  Currently tied to tile types — will need updating as pipeline evolves.
+- `src/hexmap/HexWFCCore.js` — cube coordinate helpers, adjacency rules.
+
+### Road Tile names to be aware of
+**Road:** `ROAD_A`, `ROAD_B`, `ROAD_D`, `ROAD_E`, `ROAD_F`, `ROAD_END`,
+`ROAD_A_SLOPE_LOW`, `ROAD_A_SLOPE_HIGH`
 
 ---
 
 ## Conventions
-- New GUI parameters follow the pattern already established by `slopeBias`
+- New options follow the pattern established by `excludeRivers` and `slopeBias`
 - Always pass new options through the full chain:
-  GUI params → HexMap context → WFCManager → solveWfcAsync options → worker
-- Do not re-seed the WFC worker's RNG per solve (breaks determinism)
+  GUI → HexMap context → WFCManager → solveWfcAsync options → worker
+- Do not re-seed the WFC worker RNG per solve (breaks determinism)
+- New pipeline phases live in dedicated files (e.g. `src/hexmap/RiverRouter.js`)
+  rather than being added to HexMap.js directly
+- Branch naming: `feature/<short-description>`
 - Build with `npx vite build` — no test suite currently
+- One PR per step — keep changes reviewable
