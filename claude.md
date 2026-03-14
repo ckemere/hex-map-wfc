@@ -23,18 +23,19 @@ Original article: https://felixturner.github.io/hex-map-wfc/article/
   blue=path, magenta=confluence, cyan=coast end, yellow=edge end, orange=basin end.
   Slope tiles shown as green/brown background tint.
 
-## The main goal: a two-pass river system
+## The main goal: multi-pass terrain generation
 The original WFC includes river tiles in the solve, which causes three problems:
 - Rivers can form loops
 - Rivers can flow uphill or cross elevation levels illogically
 - Rivers don't reliably terminate in bodies of water
 
-1. **Terrain** — WFC only. No road tiles, no river tiles.
-2. **Rivers** — rule-based second pass using elevation data from phase 1.
-3. **Lakes** — flood-fill from RIVER_END markers left by phase 2.
-4. **Settlements** — noise + proximity scoring after water features are known.
-5. **Roads** — pathfinding between settlements, crossing rivers at valid points.
-6. **Decorations** — trees, buildings, waterlilies as a single final pass.
+Pipeline phases (run in order after WFC terrain solve):
+1. **Terrain** — WFC only. No road tiles, no river tiles. ✅
+2. **Rivers** — rule-based second pass using elevation data from phase 1. ✅
+3. **Forests** — noise-weighted placement on grass cells, respecting rivers. ⬜
+4. **Villages** — proximity-scored placement, respecting rivers and forests. ⬜
+5. **Lakes** — flood-fill from RIVER_END markers left by phase 2. ⬜
+6. **Roads** — pathfinding between settlements, crossing rivers at valid points. ⬜
 
 ---
 
@@ -107,21 +108,32 @@ ensures rivers never run side-by-side on flat terrain.
 
 ---
 
-## Step 3 — Tile replacement (in progress)
+## Step 3 — Tile replacement ✅ DONE
 
-### Direct replacement
 `computeReplacements()` selects the best river tile + rotation for each cell in
 the routed path. Uses `selectRiverTile(dirs)` which matches needed river edge
-directions against the TILE_LIST. Coast-end cells try `_selectCoastTile()` which
-validates RIVER_INTO_COAST edges against all 6 neighbors.
+directions against the TILE_LIST. Coast-end cells place RIVER_INTO_COAST
+directly — BFS pre-validates mouth compatibility via the `validMouths` map
+(checks the 5 non-river edges), so no re-validation is needed at placement time.
 
-### Local WFC re-solve for coast endpoints
-When RIVER_INTO_COAST can't be placed directly (edge constraints don't match
-surrounding tiles), `_resolveCoastEndpoints()` runs a radius-2 local WFC re-solve
-centered on the coast cell. The solver has river tiles enabled and uses:
-- `initialCollapses` to force the last land cell to its assigned river tile
-- Boundary fixed cells (including upstream river tiles already placed)
-- The WFC naturally finds RIVER_INTO_COAST and reshapes local coastline geometry
+---
+
+## Step 4 — Forest placement (next)
+
+Post-river pass to place tree/forest tiles on eligible grass cells. Should run
+after river tile replacement so forests can respect river positions. Design
+considerations:
+- Biases: near rivers, mid-elevation, away from coast
+- Noise-based density variation for natural clustering
+- Must not overwrite river tiles or coast tiles
+
+## Step 5 — Village placement (after forests)
+
+Place village tiles on remaining grass cells after forests are placed. Should
+respect both river and forest positions. Design considerations:
+- Biases: near rivers (trade routes), flat areas, accessible terrain
+- Minimum distance between villages to avoid clustering
+- Must not overwrite river, coast, or forest tiles
 
 ---
 
@@ -141,8 +153,8 @@ centered on the coast cell. The solver has river tiles enabled and uses:
   After WFC, calls `routeRivers()` (async) which runs RiverRouter, applies tile
   replacements, and does local WFC re-solves for coast endpoints.
 - `src/hexmap/RiverRouter.js` — BFS-based river routing. Exports `RiverRouter`
-  class and `RiverCellType` enum. `computeReplacements()` returns both direct
-  replacements and `coastResolves` for cells needing local WFC.
+  class and `RiverCellType` enum. `computeReplacements()` returns direct
+  tile replacements for the entire river path including coast mouths.
 - `src/hexmap/RiverDebugOverlay.js` — debug visualisation of routed rivers.
   Colored hex fills rendered as a Three.js mesh overlay.
 - `src/hexmap/HexWFCCore.js` — cube coordinate helpers (`cubeKey`, `CUBE_DIRS`,
