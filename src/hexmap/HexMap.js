@@ -1336,7 +1336,7 @@ export class HexMap {
     const tileTypes = this.getDefaultTileTypes({ excludeRivers: false, excludeRoads: true })
     let resolved = 0
 
-    for (const { coastCell, lastLandCell, lastLandTile } of coastResolves) {
+    for (const { coastCell, coastRotation, lastLandCell, lastLandTile } of coastResolves) {
       if (!coastCell) continue
 
       // Define solve region: radius 2 around the coast cell
@@ -1345,9 +1345,15 @@ export class HexMap {
 
       const fixedCells = this.getFixedCellsForRegion(solveCells)
 
-      // If we have a last land cell with a known river tile, force it as
-      // an initialCollapse so the solver must connect to it
-      const initialCollapses = []
+      // Force RIVER_INTO_COAST at the coast cell with the correct rotation,
+      // and force the last land cell to its river tile. The WFC solver then
+      // reshapes the surrounding coastline to accommodate both.
+      const initialCollapses = [{
+        q: coastCell.q, r: coastCell.r, s: coastCell.s,
+        type: TileType.RIVER_INTO_COAST,
+        rotation: coastRotation,
+        level: coastCell.level,
+      }]
       if (lastLandCell && lastLandTile) {
         initialCollapses.push({
           q: lastLandCell.q, r: lastLandCell.r, s: lastLandCell.s,

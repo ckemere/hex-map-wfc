@@ -538,14 +538,16 @@ export class RiverRouter {
           replacements.push(coastTile)
           replaced++
         } else {
-          // Queue for local re-solve. Record the last land cell and
-          // the river tile we'd assign to it, so the caller can use it
-          // as an initialCollapse constraint.
+          // Queue for local re-solve. Compute the RIVER_INTO_COAST rotation
+          // so the caller can force it as an initialCollapse, and record the
+          // last land cell + its river tile for the same purpose.
+          const riverDir = dirs.values().next().value
+          const coastRotation = (riverDir - 5 + 6) % 6
           const lastLandKey = coastPredecessor.get(key)
           const lastLandCell = lastLandKey ? this.globalCells.get(lastLandKey) : null
           const lastLandDirs = lastLandKey ? cellDirs.get(lastLandKey) : null
           const lastLandTile = lastLandDirs ? selectRiverTile(lastLandDirs) : null
-          coastResolves.push({ coastCell: cell, lastLandCell, lastLandTile })
+          coastResolves.push({ coastCell: cell, coastRotation, lastLandCell, lastLandTile })
           skipped++
         }
         continue
