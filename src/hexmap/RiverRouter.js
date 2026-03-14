@@ -26,15 +26,10 @@ export const RiverCellType = {
 /**
  * Effective elevation of a cell, accounting for slope tiles.
  * For a flat tile this is just cell.level (0–4).
- * For a slope tile the "average" elevation is baseLevel + 0.5 * increment,
- * but for river routing we care about whether water can flow, so we use the
- * maximum edge level (water sits at the high side of a slope).
+ * For a slope tile we return the base level (low side) since that represents
+ * the "floor" water sits on.
  */
 function cellElevation(cell) {
-  const def = TILE_LIST[cell.type]
-  if (!def?.highEdges?.length) return cell.level
-
-  // For slopes, use base level — water flows off the low side
   return cell.level
 }
 
@@ -199,8 +194,6 @@ export class RiverRouter {
       const current = this.globalCells.get(currentKey)
       if (!current) break
 
-      const currentElev = cellElevation(current)
-
       // Evaluate all 6 neighbors
       const neighbors = []
       for (let d = 0; d < 6; d++) {
@@ -224,13 +217,19 @@ export class RiverRouter {
         const isWater = edgeVals.every(e => e === 'water')
         const hasCoast = edgeVals.some(e => e === 'coast')
 
-        // The effective elevation the river "sees" crossing this edge
-        // Use the edge level from the current cell's side
+        // Edge-aware elevation comparison:
+        // exitEdgeLevel = the level on the current cell's side of this edge
+        // entryEdgeLevel = the level on the neighbor's side (opposite direction)
         const exitEdgeLevel = edgeLevelAt(current, d)
-        const neighborElev = cellElevation(neighbor)
+        const oppositeDir = (d + 3) % 6
+        const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
 
-        // Effective elevation for comparison: use max of neighbor base and entry edge
-        const effectiveElev = neighborElev
+        // The river can cross this edge if the neighbor's entry edge is not
+        // higher than the current cell's exit edge. Use the max of
+        // (neighbor base level, entry edge level) as the effective elevation
+        // the river must overcome. This prevents rivers from crossing from a
+        // flat tile onto the high side of a slope (and thence to a hill).
+        const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
 
         neighbors.push({
           key: nk,
@@ -262,9 +261,12 @@ export class RiverRouter {
       // --- Pick best downhill neighbor ---
       const validNeighbors = neighbors.filter(n => !n.isEdge && !n.isWater && !n.isCoast)
 
-      // Partition into downhill, flat, and uphill
-      const downhill = validNeighbors.filter(n => n.elev < currentElev)
-      const flat = validNeighbors.filter(n => n.elev === currentElev)
+      // Partition using edge-aware elevation comparison per direction.
+      // Each neighbor has its own exitEdgeLevel (the level on the current cell's
+      // side of that edge). A neighbor is "downhill" if its effective elevation
+      // is strictly less than the exit edge we'd cross to reach it.
+      const downhill = validNeighbors.filter(n => n.elev < n.exitEdgeLevel)
+      const flat = validNeighbors.filter(n => n.elev === n.exitEdgeLevel)
 
       let best = null
 
