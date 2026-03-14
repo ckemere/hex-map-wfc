@@ -320,6 +320,15 @@ export class RiverRouter {
         // Only allow downhill or flat (relative to exit edge)
         if (effectiveElev > exitEdgeLevel) continue
 
+        // --- Adjacency confluence check ---
+        // If this candidate cell is adjacent to a cell owned by another river,
+        // treat it as a confluence goal. This prevents two rivers from running
+        // in parallel on neighboring cells (especially on flat terrain).
+        if (this._isAdjacentToOwnedRiver(nq, nr, ns, globalOwned)) {
+          goals.push({ goalKey: nk, goalType: GoalType.CONFLUENCE, traceTo: currentKey, cost: currentCost })
+          continue
+        }
+
         // --- Compute cost to reach this neighbor ---
         let stepCost = effectiveElev + this.distanceCost
 
@@ -399,8 +408,13 @@ export class RiverRouter {
       globalOwned.set(goalKey, { riverIndex })
     } else if (endType === RiverCellType.CONFLUENCE) {
       path.push(goalKey)
-      // Mark the confluence cell — keep the original river's ownership
-      this.riverCells.set(goalKey, { type: RiverCellType.CONFLUENCE, riverIndex: globalOwned.get(goalKey).riverIndex })
+      // Mark the confluence cell. If it's directly owned by a previous river,
+      // keep that river's ownership. Otherwise (adjacency-based merge) claim
+      // it for the current river.
+      const owned = globalOwned.get(goalKey)
+      const ownerIndex = owned ? owned.riverIndex : riverIndex
+      this.riverCells.set(goalKey, { type: RiverCellType.CONFLUENCE, riverIndex: ownerIndex })
+      if (!owned) globalOwned.set(goalKey, { riverIndex })
     } else if (endType === RiverCellType.EDGE_END) {
       // Edge cell is off-map, just mark the last real cell
       path.push(goalKey)
@@ -412,6 +426,20 @@ export class RiverRouter {
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
+
+  /**
+   * Check whether any of a cell's 6 neighbors belongs to a previously
+   * committed river (in globalOwned). Used to force merges before two
+   * rivers run side-by-side.
+   */
+  _isAdjacentToOwnedRiver(q, r, s, globalOwned) {
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
+      if (globalOwned.has(nk)) return true
+    }
+    return false
+  }
 
   /**
    * Count how many of a cell's 6 neighbors are off the map edge.
