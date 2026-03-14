@@ -12,11 +12,13 @@
  *   4. Commit the path into a shared globalOwned map so later rivers can
  *      detect confluences
  *
- * Does NOT replace tiles yet — only computes paths for debug visualisation.
+ * After routing, `computeReplacements()` selects the best river tile type
+ * and rotation for each path cell, returning an array of tile descriptors
+ * that can be applied via HexMap.applyTileResultsToGrids().
  */
 
 import { cubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
-import { TILE_LIST } from './HexTileData.js'
+import { TILE_LIST, TileType } from './HexTileData.js'
 import { random } from '../SeededRandom.js'
 
 /**
@@ -455,4 +457,268 @@ export class RiverRouter {
     }
     return count
   }
+
+  // ---------------------------------------------------------------------------
+  // Tile replacement
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compute tile replacements for all routed rivers.
+   * Must be called after route().
+   *
+   * @returns {Array<{ q, r, s, type, rotation, level }>} tiles to replace
+   */
+  computeReplacements() {
+    // 1. Collect all river direction indices per cell across all rivers.
+    //    A cell may appear in multiple paths (confluence), so we accumulate
+    //    a Set of direction indices where a river edge is needed.
+    const cellDirs = new Map()  // cubeKey → Set<dirIndex>
+    const cellEndType = new Map() // cubeKey → endType (for terminal cells)
+
+    for (const river of this.rivers) {
+      const { path, endType } = river
+
+      for (let i = 0; i < path.length; i++) {
+        const key = path[i]
+        const cell = this.globalCells.get(key)
+        if (!cell) continue  // off-map (edge end goal)
+
+        if (!cellDirs.has(key)) cellDirs.set(key, new Set())
+        const dirs = cellDirs.get(key)
+
+        // Direction toward previous cell in path (entry)
+        if (i > 0) {
+          const prevCell = this.globalCells.get(path[i - 1])
+          if (prevCell) {
+            const d = this._directionBetween(cell, prevCell)
+            if (d >= 0) dirs.add(d)
+          }
+        }
+
+        // Direction toward next cell in path (exit)
+        if (i < path.length - 1) {
+          const nextCell = this.globalCells.get(path[i + 1])
+          if (nextCell) {
+            const d = this._directionBetween(cell, nextCell)
+            if (d >= 0) dirs.add(d)
+          }
+        }
+
+        // Track end type for terminal cells
+        if (i === path.length - 1) {
+          cellEndType.set(key, endType)
+        }
+      }
+    }
+
+    // 2. For each cell, select the best river tile + rotation.
+    const replacements = []
+    let replaced = 0, skipped = 0
+
+    for (const [key, dirs] of cellDirs) {
+      const cell = this.globalCells.get(key)
+      if (!cell) continue
+
+      const endType = cellEndType.get(key)
+
+      // Coast-end cells get RIVER_INTO_COAST if we can find a valid rotation
+      if (endType === RiverCellType.COAST_END) {
+        const coastTile = this._selectCoastTile(cell, dirs)
+        if (coastTile) {
+          replacements.push(coastTile)
+          replaced++
+          continue
+        }
+        // Fall through to normal selection if coast tile doesn't fit
+      }
+
+      const match = selectRiverTile(dirs)
+      if (!match) {
+        skipped++
+        continue
+      }
+
+      replacements.push({
+        q: cell.q, r: cell.r, s: cell.s,
+        type: match.type,
+        rotation: match.rotation,
+        level: cell.level,
+      })
+      replaced++
+    }
+
+    console.warn(`[RIVERS] Tile replacements: ${replaced} replaced, ${skipped} skipped`)
+    return replacements
+  }
+
+  /**
+   * Find the direction index (0–5) from cell A to cell B.
+   * Returns -1 if they are not adjacent.
+   */
+  _directionBetween(cellA, cellB) {
+    const dq = cellB.q - cellA.q
+    const dr = cellB.r - cellA.r
+    const ds = cellB.s - cellA.s
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      if (dir.dq === dq && dir.dr === dr && dir.ds === ds) return d
+    }
+    return -1
+  }
+
+  /**
+   * Try to place RIVER_INTO_COAST at a coast-end cell.
+   * RIVER_INTO_COAST has a river edge on NW (index 5) in its unrotated form.
+   * We need the river edge to face back toward the path, so we rotate to match.
+   */
+  _selectCoastTile(cell, dirs) {
+    if (dirs.size !== 1) return null // coast end should have exactly 1 river dir
+    const riverDir = dirs.values().next().value
+    // Unrotated river edge is at index 5 (NW).
+    // We need (5 + rotation) % 6 === riverDir.
+    const rotation = (riverDir - 5 + 6) % 6
+    return {
+      q: cell.q, r: cell.r, s: cell.s,
+      type: TileType.RIVER_INTO_COAST,
+      rotation,
+      level: cell.level,
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// River tile selection — pure function mapping direction sets to tile+rotation
+// ---------------------------------------------------------------------------
+
+/**
+ * Available river tile templates: each entry lists the direction indices where
+ * river edges exist in the tile's unrotated (rotation=0) form.
+ *
+ * Direction indices: 0=NE, 1=E, 2=SE, 3=SW, 4=W, 5=NW
+ */
+const RIVER_TILES_2 = [
+  // 2-edge tiles (sorted by unrotated river edge indices)
+  { type: TileType.RIVER_A,       dirs: [1, 4], sep: 3 },  // E, W — straight (180°)
+  { type: TileType.RIVER_A_CURVY, dirs: [1, 4], sep: 3 },  // E, W — straight curvy variant
+  { type: TileType.RIVER_B,       dirs: [0, 4], sep: 2 },  // NE, W — gentle curve (120°)
+]
+
+const RIVER_TILES_3 = [
+  // 3-edge tiles
+  { type: TileType.RIVER_D, dirs: [0, 2, 4] },  // NE, SE, W — evenly spaced (120° each)
+  { type: TileType.RIVER_E, dirs: [0, 1, 4] },  // NE, E, W — two adjacent + one opposite
+  { type: TileType.RIVER_F, dirs: [1, 2, 4] },  // E, SE, W — two adjacent + one opposite
+]
+
+/**
+ * Given a set of required river direction indices, find the best tile type
+ * and rotation.
+ *
+ * @param {Set<number>} requiredDirs — direction indices (0–5) needing river edges
+ * @returns {{ type: number, rotation: number } | null}
+ */
+function selectRiverTile(requiredDirs) {
+  const n = requiredDirs.size
+
+  if (n === 0) return null
+
+  // 1 edge — RIVER_END (unrotated river edge at index 4 = W)
+  if (n === 1) {
+    const dir = requiredDirs.values().next().value
+    // (4 + rotation) % 6 === dir  →  rotation = (dir - 4 + 6) % 6
+    const rotation = (dir - 4 + 6) % 6
+    return { type: TileType.RIVER_END, rotation }
+  }
+
+  // 2 edges — determine angular separation to pick tile
+  if (n === 2) {
+    const [a, b] = [...requiredDirs].sort((x, y) => x - y)
+    const sep = Math.min(b - a, 6 - (b - a))
+
+    if (sep === 3) {
+      // Straight (180°) — RIVER_A or RIVER_A_CURVY
+      // Unrotated: river edges at indices 1, 4 (E, W).
+      // We need (1 + rotation) % 6 === a and (4 + rotation) % 6 === b (or vice versa).
+      // Since sep=3, if (1 + r) % 6 === a then (4 + r) % 6 === (a + 3) % 6.
+      // We need {(1+r)%6, (4+r)%6} === {a, b}.
+      const rotation = (a - 1 + 6) % 6
+      // Randomly pick straight or curvy
+      const type = random() < 0.5 ? TileType.RIVER_A : TileType.RIVER_A_CURVY
+      return { type, rotation }
+    }
+
+    if (sep === 2) {
+      // Gentle curve (120°) — RIVER_B
+      // Unrotated: river edges at indices 0, 4 (NE, W). Separation = 4 on the
+      // index ring, but angular separation = min(4, 6-4) = 2 steps.
+      // The two river edges are separated by 2 steps going one way (the "short" arc).
+      // For RIVER_B unrotated: 0 and 4. Short arc: 0→5→4 = 2 steps "backwards",
+      // or equivalently 4→5→0 = 2 steps forward. Actually: min(|4-0|, 6-|4-0|) = min(4,2) = 2. ✓
+      //
+      // We need to find rotation r such that {(0+r)%6, (4+r)%6} = {a, b}.
+      // Try both orientations:
+      for (const flip of [false, true]) {
+        const d0 = flip ? b : a
+        const d1 = flip ? a : b
+        const r = (d0 - 0 + 6) % 6
+        if ((4 + r) % 6 === d1) return { type: TileType.RIVER_B, rotation: r }
+      }
+      // Shouldn't reach here for sep=2, but fallback
+      return null
+    }
+
+    // sep === 1 (60° — sharp bend): no tile exists for this.
+    // Use RIVER_B as best approximation — one edge will be wrong but it's
+    // better than nothing. Pick the rotation that matches one of the two edges.
+    if (sep === 1) {
+      const dir = requiredDirs.values().next().value
+      const rotation = (dir - 0 + 6) % 6
+      return { type: TileType.RIVER_B, rotation }
+    }
+
+    return null
+  }
+
+  // 3 edges — match against the three 3-way junction tiles
+  if (n === 3) {
+    const sorted = [...requiredDirs].sort((x, y) => x - y)
+
+    for (const template of RIVER_TILES_3) {
+      const match = matchTile3(sorted, template.dirs)
+      if (match !== null) return { type: template.type, rotation: match }
+    }
+
+    // No exact match — shouldn't happen with D/E/F covering all 3-edge patterns
+    // but fall back to RIVER_D with best-effort rotation
+    const rotation = (sorted[0] - 0 + 6) % 6
+    return { type: TileType.RIVER_D, rotation }
+  }
+
+  // 4+ edges — no tiles exist. Use RIVER_D as best approximation.
+  if (n >= 4) {
+    // Pick 3 most spread-out directions
+    const dir = requiredDirs.values().next().value
+    const rotation = (dir - 0 + 6) % 6
+    return { type: TileType.RIVER_D, rotation }
+  }
+
+  return null
+}
+
+/**
+ * Try to find a rotation r such that rotating the template's direction set
+ * produces exactly the required direction set.
+ *
+ * @param {number[]} required — sorted array of 3 direction indices
+ * @param {number[]} template — sorted array of 3 direction indices (unrotated)
+ * @returns {number|null} rotation (0–5) or null if no match
+ */
+function matchTile3(required, template) {
+  for (let r = 0; r < 6; r++) {
+    const rotated = template.map(d => (d + r) % 6).sort((a, b) => a - b)
+    if (rotated[0] === required[0] && rotated[1] === required[1] && rotated[2] === required[2]) {
+      return r
+    }
+  }
+  return null
 }

@@ -1283,6 +1283,24 @@ export class HexMap {
     const router = new RiverRouter(this.globalCells)
     const { riverCells } = router.route()
 
+    // Compute and apply tile replacements
+    const replacements = router.computeReplacements()
+    if (replacements.length > 0) {
+      // Update globalCells with new tile types
+      for (const tile of replacements) {
+        const key = cubeKey(tile.q, tile.r, tile.s)
+        const existing = this.globalCells.get(key)
+        if (existing) {
+          existing.type = tile.type
+          existing.rotation = tile.rotation
+          existing.level = tile.level
+        }
+      }
+      // Apply visual replacements to grids
+      this.applyTileResultsToGrids(replacements)
+      log(`[RIVERS] Applied ${replacements.length} tile replacements`, 'color: #3388ff')
+    }
+
     if (!this.riverOverlay) {
       this.riverOverlay = new RiverDebugOverlay(this.scene)
     }
