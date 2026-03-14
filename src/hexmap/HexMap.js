@@ -403,7 +403,8 @@ export class HexMap {
     }
 
     const excludeRivers = App.instance?.params?.roads?.excludeRivers ?? false
-    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
+    const excludeRoads = App.instance?.params?.roads?.excludeRoads ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers, excludeRoads })
     const anchorMap = new Map()
     for (const fc of fixedCells) {
       anchorMap.set(cubeKey(fc.q, fc.r, fc.s), this.getAnchorsForCell(fc, solveSet, fixedSet))
@@ -1139,7 +1140,8 @@ export class HexMap {
 
     // ---- Single WFC solve (no fixed cells) ----
     const excludeRivers = params?.roads?.excludeRivers ?? false
-    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
+    const excludeRoads = params?.roads?.excludeRoads ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers, excludeRoads })
     const result = await this.solveWfcAsync(allSolveCells, [], {
       tileTypes,
       weights: {},
@@ -1392,7 +1394,8 @@ export class HexMap {
 
     const fixedCells = this.getFixedCellsForRegion(solveCells)
     const excludeRivers = App.instance?.params?.roads?.excludeRivers ?? false
-    const tileTypes = this.getDefaultTileTypes({ excludeRivers })
+    const excludeRoads = App.instance?.params?.roads?.excludeRoads ?? false
+    const tileTypes = this.getDefaultTileTypes({ excludeRivers, excludeRoads })
 
     const result = await this.solveWfcAsync(solveCells, fixedCells, {
       tileTypes,
