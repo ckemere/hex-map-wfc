@@ -29,6 +29,8 @@ import { initGlobalTreeNoise, rebuildNoiseTables, Decorations } from './Decorati
 import { Water } from './effects/Water.js'
 import { random, setSeed } from '../SeededRandom.js'
 import { Sounds } from '../lib/Sounds.js'
+import { RiverRouter } from './RiverRouter.js'
+import { RiverDebugOverlay } from './RiverDebugOverlay.js'
 
 const LEVEL_HEIGHT = 0.5
 const TILE_SURFACE = 1
@@ -97,6 +99,10 @@ export class HexMap {
 
     // Debug/display manager
     this.debug = new HexMapDebug(this)
+
+    // River debug overlay
+    this.riverOverlay = null  // created lazily after scene is ready
+    this._riverDebugVisible = false
 
     // Helper visibility state
     this.helpersVisible = false
@@ -1033,6 +1039,9 @@ export class HexMap {
     Sounds.play('intro')
     this.onTilesChanged?.(Promise.resolve())
 
+    // Route rivers post-WFC
+    this.routeRivers()
+
     return {
       success: true,
       time: elapsed,
@@ -1071,6 +1080,7 @@ export class HexMap {
     this.seededCells.clear()
     this._waterSideIndex = null
     this.clearTileLabels()
+    if (this.riverOverlay) this.riverOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
@@ -1254,7 +1264,39 @@ export class HexMap {
     }
     this.onTilesChanged?.(Promise.all(animPromises))
 
+    // Route rivers post-WFC
+    this.routeRivers()
+
     return { success: true, time: parseFloat(totalTime), backtracks: result.backtracks || 0, tries: result.tries || 0 }
+  }
+
+  // ---------------------------------------------------------------------------
+  // River routing & debug overlay
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Run river routing on the current globalCells and update the debug overlay.
+   * Called automatically after Build All / Auto-Build completes.
+   */
+  routeRivers() {
+    const router = new RiverRouter(this.globalCells)
+    const { riverCells } = router.route()
+
+    if (!this.riverOverlay) {
+      this.riverOverlay = new RiverDebugOverlay(this.scene)
+    }
+    this.riverOverlay.update(riverCells, this.globalCells)
+    this.riverOverlay.setVisible(this._riverDebugVisible)
+
+    const srcCount = router.rivers.length
+    const pathCount = riverCells.size
+    log(`[RIVERS] Routed ${srcCount} rivers, ${pathCount} cells`, 'color: #3388ff')
+  }
+
+  /** Toggle the river debug overlay on/off */
+  setRiverDebugVisible(visible) {
+    this._riverDebugVisible = visible
+    if (this.riverOverlay) this.riverOverlay.setVisible(visible)
   }
 
   /**
@@ -1572,6 +1614,9 @@ export class HexMap {
     this._waterSideIndex = null
     this.clearTileLabels()
 
+    // Dispose river debug overlay
+    if (this.riverOverlay) this.riverOverlay.dispose()
+
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
 
@@ -1618,6 +1663,7 @@ export class HexMap {
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
+    if (this.riverOverlay) this.riverOverlay.dispose()
 
     // Collect grids to dispose, then clear map FIRST
     // (so getOverlayObjects() won't return disposed objects)
