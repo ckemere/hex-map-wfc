@@ -1339,8 +1339,12 @@ export class HexMap {
     for (const { coastCell, coastRotation, lastLandCell, lastLandTile } of coastResolves) {
       if (!coastCell) continue
 
-      // Define solve region: radius 2 around the coast cell
-      const solveCells = cubeCoordsInRadius(coastCell.q, coastCell.r, coastCell.s, 2)
+      // Define solve region: radius 4 around the coast cell.
+      // Needs to be large enough that the fixed boundary (at distance 5)
+      // is past the coast transition zone — mostly pure water or grass tiles
+      // whose edges are easy to satisfy, giving the solver room to reshape
+      // the coastline around the river mouth.
+      const solveCells = cubeCoordsInRadius(coastCell.q, coastCell.r, coastCell.s, 4)
         .filter(c => this.globalCells.has(cubeKey(c.q, c.r, c.s)))
 
       const fixedCells = this.getFixedCellsForRegion(solveCells)
