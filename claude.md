@@ -12,10 +12,24 @@ Original article: https://felixturner.github.io/hex-map-wfc/article/
 - Removed river tiles from WFC solve behind an `excludeRivers` option (merged).
 - Removed road tiles from WFC solve behind an `excludeRoads` option (merged).
 
-## Overall vision: a multi-phase generation pipeline
-The original WFC generates terrain, roads, and rivers simultaneously with no
-awareness of physical plausibility. We are replacing this with a sequenced
-pipeline where each phase respects the output of the previous one:
+- **Excluded rivers from WFC** (Step 1 complete).
+  River tiles are filtered out of the WFC solve when `excludeRivers` is true.
+  The map generates cleanly with only land/coast/water/slope tiles.
+
+- **BFS-based river routing** (Step 2 complete — routing only, no tile replacement yet).
+  `RiverRouter` runs as a post-WFC pass. Routes rivers downhill from high-elevation
+  sources to coast/water/map-edge using Dijkstra-style BFS tree expansion.
+
+- **Debug overlay** for river visualisation.
+  `RiverDebugOverlay` renders colored hex fills on the terrain: red=source,
+  blue=path, magenta=confluence, cyan=coast end, yellow=edge end, orange=basin end.
+  Slope tiles shown as green/brown background tint.
+
+## The main goal: a two-pass river system
+The original WFC includes river tiles in the solve, which causes three problems:
+- Rivers can form loops
+- Rivers can flow uphill or cross elevation levels illogically
+- Rivers don't reliably terminate in bodies of water
 
 1. **Terrain** — WFC only. No road tiles, no river tiles.
 2. **Rivers** — rule-based second pass using elevation data from phase 1.
@@ -34,148 +48,76 @@ River tiles excluded from solve behind `excludeRivers` boolean option.
 ### Step 2 — Remove roads from WFC ✅ DONE
 Road tiles excluded from solve behind `excludeRoads` boolean option.
 
-### Step 3 — Rule-based river placement (next task)
+## Step 3 — River routing algorithm ✅ DONE
 Post-WFC second pass using solved elevation data from `globalCells`.
-Implemented as a new self-contained class `src/hexmap/RiverRouter.js`.
 
-**Input:** `globalCells` map, noise seed, config object (min source elevation,
-max river length, min source spacing, etc.)
+### Architecture
+`RiverRouter` (`src/hexmap/RiverRouter.js`) takes `globalCells` and produces:
+- `riverCells`: Map<cubeKey, { type, riverIndex }> — every cell touched by a river
+- `rivers`: Array<{ source, path, endType }> — per-river metadata
 
-**Output:** array of river paths, each:
-`{ cells: [{q, r, s, entryDir, exitDir}], termination: 'coast'|'edge'|'basin'|'discarded' }`
+### Source placement
+Noise-weighted selection among high-elevation cells (level ≥ `minSourceLevel`,
+default 2). A hash-based noise field is multiplied by cell elevation to produce a
+source weight. Sources are greedily picked highest-weight-first, enforcing
+`minSourceDistance` (default 6) between them. Cells near the map edge or with
+coast/water/river edges are excluded.
 
-This output drives both debug visualisation and tile placement.
+### Flow routing — BFS tree expansion
+Each river expands a Dijkstra-style BFS tree from its source through downhill and
+flat neighbors (using a `MinHeap` priority queue):
 
-#### Source placement
-Noise-weighted selection among high-elevation cells (level 3+). A low-frequency
-noise field (independent of terrain noise) is multiplied by cell elevation to
-produce a source probability. Apply a minimum distance between sources to prevent
-clustering.
+- **Cost function**: `effectiveElevation + distanceCost + edgePenalty`.
+  - `effectiveElevation` = max(neighbor base level, entry edge level) — accounts
+    for slopes so rivers don't cross onto the high side of a slope tile.
+  - `distanceCost` (default 0.15) — per-step penalty to prefer shorter paths.
+  - `edgePenalty` (default 2.0 per missing neighbor) — repels rivers from map edges.
+- **Per-river state**: `cameFrom` (parent pointers) and `costSoFar` maps, fresh
+  per river. These are the BFS tree — not shared across rivers.
+- **`globalOwned`**: shared Map of cells committed by finalized rivers. Only
+  written after a river's path is fully traced. Used for confluence detection.
 
-#### Flow routing
-Greedy downhill routing in cube coordinates. At each cell, evaluate all 6 hex
-neighbours and move to the lowest elevation.
+### Goal detection
+The BFS tree stops expanding a branch when it hits:
+- **Coast/water tile** → `COAST_END` (preferred goal)
+- **Cell in `globalOwned`** from another river → `CONFLUENCE`
+- **Cell adjacent to `globalOwned`** from another river → `CONFLUENCE`
+  (prevents parallel rivers on flat terrain)
+- **Off-map cell** → `EDGE_END`
+- No valid neighbors → dead leaf (naturally pruned)
 
-Tiebreaker for flat sections:
-- Primary: momentum — prefer continuing in the current direction of travel
-- Secondary: noise jitter — small noise offset to effective elevation when
-  comparing equal neighbours, producing slight meanders
+All goals are collected, then the best is selected: coast > confluence > edge,
+tiebroken by lowest cost.
 
-#### Confluence handling
-Rivers merge. When a routing path reaches a cell already claimed by another
-river, it terminates and joins at that point. Junction tile placement is handled
-during the replacement pass.
+**Elevation check applies to all neighbors** including coast/water, preventing
+rivers from flowing uphill to high-elevation coast tiles (crater lakes).
 
-#### Tile replacement strategy
+### Path extraction
+Trace `cameFrom` pointers from the best goal back to the source. Mark cells
+in `riverCells` (for debug overlay) and `globalOwned` (for later rivers).
+
+### Confluence handling
+Rivers route highest-source-first. When river B's BFS tree touches river A's
+committed path (either directly or via adjacency), it records a confluence goal
+and terminates. This produces natural tributary merging. The adjacency check
+ensures rivers never run side-by-side on flat terrain.
+
+### River termination
+- **Reaches coast/water** → `COAST_END`. Ideal outcome.
+- **Reaches existing river** → `CONFLUENCE`. Natural tributary merge.
+- **Reaches map edge** → `EDGE_END`. River flows off the edge.
+- **No reachable goal within `maxExpansion` cells** → `BASIN_END`. Marker for
+  Step 3 lake generation.
+
+---
+
+## Step 3 remaining work: tile replacement
+
 Local re-solve. When placing a river tile, run a mini WFC on a small radius
-around the target cell seeded with the river entry/exit face directions as hard
-constraints, with noise-weighted tile selection biased toward river-compatible
-tiles. Reuses the existing Local-WFC recovery mechanism.
-
-#### Tileset constraints — IMPORTANT
-The router must treat these as hard routing constraints, not tile-placement
-problems. Only attempt routes that satisfy all of these:
-
-- **Slope descents**: only possible on E/W axis, only 1-level drops.
-  (`RIVER_A_SLOPE_LOW` is the only river slope tile.)
-  Two-level drops and non-E/W slope approaches are impassable for rivers.
-- **Road crossings**: roads are not present in phase 2 so crossings are not
-  relevant yet. Will be revisited in Step 5.
-- **Coast termination**: `RIVER_INTO_COAST` only accepts river entry from NW.
-  A river approaching coast from any other direction cannot use this tile —
-  treat as map-edge termination rather than broken placement.
-
-#### River termination rules
-- **Reaches sea or coast from NW** → place `RIVER_INTO_COAST`, terminate.
-- **Reaches map edge on land** → terminate naturally, no tile needed.
-- **No valid downhill or flat neighbour** (landlocked basin) → place `RIVER_END`
-  tile, terminate. Semantic marker for Step 4 lake generation.
-- **Exceeds maximum step count** → discard river silently. Catches routing
-  anomalies on very gentle gradients. Distinct from a genuine basin.
-
-#### Note on decorations
-`populateDecorations()` is currently called automatically inside `populateGrid`
-after each WFC solve. This must be suppressed during the pipeline — decorations
-should only run as a single final pass after all generation phases complete.
-`HexMapDebug.repopulateDecorations()` already exists for this purpose and
-iterates all populated grids. The river placement pass must not trigger
-decoration repopulation, and must clear any decorations on cells that get
-converted to river tiles before placing new ones.
-
-#### Debug visualisation
-Before implementing tile replacement, implement a debug overlay that colours
-routed river path cells directly on the terrain — sources in one colour, path
-cells in another, termination points in a third. This allows the routing logic
-to be validated visually before any tile replacement occurs.
-
----
-
-### Step 4 — Lake generation
-Flood-fill from RIVER_END tile markers. Not yet designed in detail.
-
----
-
-### Step 5 — Settlement placement
-
-#### Placement scoring
-Each candidate flat grass cell is scored by a composite of:
-
-**Strong positive:**
-- River-coast boundary (river mouth) — highest possible score. Place one
-  settlement deterministically at every `RIVER_INTO_COAST` tile location.
-- River adjacency — any flat tile neighbouring a river cell
-- Lake shore — flat tile neighbouring a lake cell
-
-**Moderate positive:**
-- Forest edge — boundary between high tree-noise and open land
-- Flat low-elevation grass
-
-**Negative:**
-- Deep forest interior
-- Cliff or slope adjacency
-- High elevation (except special fortress/monastery type)
-
-#### Settlement types
-Type is determined at seed time from location characteristics. Type governs
-building weights, count, tree clearing, and road connections:
-
-- **river_mouth_town** — requires river + coast. 8–14 buildings, market and
-  church weighted up, roads mandatory, tree clearing.
-- **riverside_village** — river adjacent, inland. 4–8 buildings, homes and
-  market, road connections, tree clearing.
-- **lake_village** — lake shore. Similar to riverside_village.
-- **coastal_port** — coast adjacent, no river. Windmills, port buildings, roads.
-- **forest_camp** — deep forest noise. 1–3 buildings, no tree clearing, no
-  roads or single track out, woodcutter character.
-- **hilltop_fortress** — high elevation, cliff adjacent. 1–2 buildings (tower
-  weighted), single road out, no tree clearing.
-
----
-
-### Step 6 — Road routing
-
-#### Pathfinding
-A* between settlement pairs across the terrain graph. Cost function:
-- Flat grass tile: low cost
-- Slope tile: higher cost (roads avoid steep terrain)
-- Cliff tile: impassable
-- River cell: passable only if a valid crossing tile exists for that direction
-  (E/W river travel only — `RIVER_CROSSING_A` and `RIVER_CROSSING_B` both have
-  river on E/W only, road on SE/NW or NE/SW respectively)
-- Water/coast: impassable
-
-#### Tile placement
-Road tiles placed along found paths using local re-solve, same approach as
-rivers. Junctions placed where paths branch. Settlement type determines how
-many road connections are required.
-
----
-
-### Step 7 — Decorations (final pass)
-Single decoration pass after all generation phases complete. Call
-`HexMapDebug.repopulateDecorations()` once at the end of the full pipeline.
-Decoration placement will naturally reflect all terrain, rivers, lakes,
-settlements and roads already in place.
+around the target cell, seeded with the river entry/exit face directions as hard
+constraints. Use noise-weighted tile selection during this local solve, biased
+toward river-compatible tiles. This reuses the existing Local-WFC recovery
+mechanism already present in the codebase.
 
 ---
 
@@ -191,6 +133,20 @@ settlements and roads already in place.
   `runWfcAttempt` is where per-solve options are assembled.
 - `src/hexmap/HexMap.js` — `populateGrid` and `populateAllGrids` are the two
   solve entry points. `globalCells` is the post-solve Map of all placed tiles,
+  keyed by cube coordinate string, each entry has `type`, `rotation`, `level`.
+  After WFC, calls `RiverRouter.route()` and updates `RiverDebugOverlay`.
+- `src/hexmap/RiverRouter.js` — BFS-based river routing. Exports `RiverRouter`
+  class and `RiverCellType` enum.
+- `src/hexmap/RiverDebugOverlay.js` — debug visualisation of routed rivers.
+  Colored hex fills rendered as a Three.js mesh overlay.
+- `src/hexmap/HexWFCCore.js` — cube coordinate helpers (`cubeKey`, `CUBE_DIRS`,
+  `cubeDistance`), adjacency rules, `getEdgeLevel` for slope-aware edge levels.
+- `src/GUI.js` — all GUI parameters. Generation-time params go in
+  `allParams.roads`. Visual/shader params go in `allParams.debug`.
+
+### River tile names to be aware of
+`RIVER_A`, `RIVER_B`, `RIVER_C`, `RIVER_END`, `RIVER_A_SLOPE_LOW`,
+`RIVER_INTO_COAST`, `RIVER_CROSSING_A`, `RIVER_CROSSING_B`
   keyed by cube coordinate string, each with `type`, `rotation`, `level`.
 - `src/hexmap/HexMapDebug.js` — `repopulateDecorations()` iterates all grids.
 - `src/GUI.js` — all GUI parameters. Generation-time params go in
@@ -199,11 +155,7 @@ settlements and roads already in place.
   Currently tied to tile types — will need updating as pipeline evolves.
 - `src/hexmap/HexWFCCore.js` — cube coordinate helpers, adjacency rules.
 
-### Tile names to be aware of
-**River:** `RIVER_A`, `RIVER_A_CURVY`, `RIVER_B`, `RIVER_D`, `RIVER_E`,
-`RIVER_F`, `RIVER_END`, `RIVER_A_SLOPE_LOW`, `RIVER_INTO_COAST`,
-`RIVER_CROSSING_A`, `RIVER_CROSSING_B`
-
+### Road Tile names to be aware of
 **Road:** `ROAD_A`, `ROAD_B`, `ROAD_D`, `ROAD_E`, `ROAD_F`, `ROAD_END`,
 `ROAD_A_SLOPE_LOW`, `ROAD_A_SLOPE_HIGH`
 
@@ -217,4 +169,5 @@ settlements and roads already in place.
 - New pipeline phases live in dedicated files (e.g. `src/hexmap/RiverRouter.js`)
   rather than being added to HexMap.js directly
 - Branch naming: `feature/<short-description>`
+- Build with `npx vite build` — no test suite currently
 - One PR per step — keep changes reviewable
