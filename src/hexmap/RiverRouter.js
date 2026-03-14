@@ -255,10 +255,12 @@ export class RiverRouter {
 
     // Per-river BFS state
     const cameFrom = new Map()   // key → parentKey (null for source)
+    const entryDir = new Map()   // key → direction index the river enters from (null for source)
     const costSoFar = new Map()  // key → best cost to reach this cell
     const frontier = new MinHeap()
 
     cameFrom.set(sourceKey, null)
+    entryDir.set(sourceKey, null)
     costSoFar.set(sourceKey, 0)
     frontier.push({ key: sourceKey, cost: 0 })
 
@@ -282,8 +284,19 @@ export class RiverRouter {
 
       const currentElev = cellElevation(current)
 
-      // Expand all 6 neighbors
-      for (let d = 0; d < 6; d++) {
+      // Determine valid exit directions based on river tile geometry.
+      // From a cell entered in direction e, the river can exit to:
+      //   (e+2)%6  — 120° bend (RIVER_B)
+      //   (e+3)%6  — 180° straight (RIVER_A)
+      //   (e+4)%6  — 120° bend (RIVER_B)
+      // 60° sharp turns (e+1, e+5) have no valid 2-edge river tile.
+      // Source cells (no entry direction) can exit in any direction.
+      const e = entryDir.get(currentKey)
+      const validExits = e === null
+        ? [0, 1, 2, 3, 4, 5]
+        : [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+
+      for (const d of validExits) {
         const dir = CUBE_DIRS[d]
         const nq = current.q + dir.dq
         const nr = current.r + dir.dr
@@ -358,6 +371,7 @@ export class RiverRouter {
         if (!costSoFar.has(nk) || newCost < costSoFar.get(nk)) {
           costSoFar.set(nk, newCost)
           cameFrom.set(nk, currentKey)
+          entryDir.set(nk, (d + 3) % 6) // direction river enters neighbor from
           frontier.push({ key: nk, cost: newCost })
         }
       }
@@ -802,13 +816,10 @@ function selectRiverTile(requiredDirs) {
       return null
     }
 
-    // sep === 1 (60° — sharp bend): no tile exists for this.
-    // Use RIVER_B as best approximation — one edge will be wrong but it's
-    // better than nothing. Pick the rotation that matches one of the two edges.
+    // sep === 1 (60° — sharp bend): no valid tile exists.
+    // BFS direction constraints should prevent this, but log if it happens.
     if (sep === 1) {
-      const dir = requiredDirs.values().next().value
-      const rotation = (dir - 0 + 6) % 6
-      return { type: TileType.RIVER_B, rotation }
+      console.warn(`[RIVERS] Unexpected 60° bend in river path — no valid tile`)
     }
 
     return null
