@@ -18,7 +18,7 @@ import { HexTile, HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { Decorations } from './Decorations.js'
 import { HexGridHelper } from './HexGridHelper.js'
 import { Placeholder } from './Placeholder.js'
-import { cubeToOffset, globalToLocalGrid } from './HexWFCCore.js'
+import { cubeToOffset, globalToLocalGrid, offsetToCube, cubeKey } from './HexWFCCore.js'
 import {
   hideAllInstances as _hideAllInstances,
   animateTileDrop as _animateTileDrop,
@@ -581,11 +581,32 @@ export class HexGrid {
 
   /**
    * Populate decorations (trees, buildings, bridges)
+   * @param {Set} [forestCells] — global cubeKey set of forest zone cells
+   * @param {Set} [villageCells] — global cubeKey set of village zone cells
    */
-  populateDecorations() {
+  populateDecorations(forestCells, villageCells) {
     if (!this.decorations) return
-    this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.gridRadius)
-    this.decorations.populate(this.hexTiles, this.gridRadius)
+
+    // Build local tile-id zone sets by converting local coords → global cube keys
+    let localForestTileIds = null
+    let localVillageTileIds = null
+    if ((forestCells || villageCells) && this.globalCenterCube) {
+      const center = this.globalCenterCube
+      if (forestCells) localForestTileIds = new Set()
+      if (villageCells) localVillageTileIds = new Set()
+      for (const tile of this.hexTiles) {
+        const localCube = offsetToCube(tile.gridX - this.gridRadius, tile.gridZ - this.gridRadius)
+        const gq = localCube.q + center.q
+        const gr = localCube.r + center.r
+        const gs = localCube.s + center.s
+        const key = cubeKey(gq, gr, gs)
+        if (forestCells && forestCells.has(key)) localForestTileIds.add(tile.id)
+        if (villageCells && villageCells.has(key)) localVillageTileIds.add(tile.id)
+      }
+    }
+
+    this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.gridRadius, { villageTileIds: localVillageTileIds })
+    this.decorations.populate(this.hexTiles, this.gridRadius, { forestTileIds: localForestTileIds })
     this.decorations.populateFlowers(this.hexTiles, this.gridRadius)
     this.decorations.populateRocks(this.hexTiles, this.gridRadius)
     this.decorations.populateHillsAndMountains(this.hexTiles, this.gridRadius)

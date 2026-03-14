@@ -186,7 +186,7 @@ export class HexMapDebug {
   repopulateDecorations() {
     for (const grid of this.hexMap.grids.values()) {
       if (grid.state === HexGridState.POPULATED) {
-        grid.populateDecorations()
+        grid.populateDecorations(this.hexMap.forestCells, this.hexMap.villageCells)
       }
     }
   }

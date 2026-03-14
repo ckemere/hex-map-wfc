@@ -200,6 +200,7 @@ export class Decorations {
 
     const threshold = getCurrentTreeThreshold()  // noise > threshold = tree
     const { x: offsetX, z: offsetZ } = this.worldOffset
+    const { forestTileIds } = options
 
     // Skip tiles that already have buildings (buildings placed first)
     const buildingTileIds = new Set(this.buildings.map(b => b.tile.id))
@@ -210,6 +211,9 @@ export class Decorations {
 
       // Skip tiles claimed by buildings
       if (buildingTileIds.has(tile.id)) continue
+
+      // If forest zones are defined, only place trees in forest-zoned cells
+      if (forestTileIds && !forestTileIds.has(tile.id)) continue
 
       // Get local position (relative to grid group)
       const localPos = HexTileGeometry.getWorldPosition(
@@ -347,8 +351,14 @@ export class Decorations {
         coastWindmillCandidates.push({ tile, roadAngle: waterAngle })
       }
 
-      // Noise-based village candidate
-      if (globalNoiseC) {
+      // Village zone or noise-based village candidate
+      const { villageTileIds } = options
+      if (villageTileIds) {
+        // When village zones are defined, use them instead of noise
+        if (villageTileIds.has(tile.id)) {
+          noiseCandidates.push({ tile })
+        }
+      } else if (globalNoiseC) {
         const localPos = HexTileGeometry.getWorldPosition(tile.gridX - gridRadius, tile.gridZ - gridRadius)
         const worldX = localPos.x + offsetX
         const worldZ = localPos.z + offsetZ
