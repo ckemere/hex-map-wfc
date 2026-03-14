@@ -162,6 +162,12 @@ export class RiverRouter {
       console.warn('[RIVERS] Sample cell:', k, JSON.stringify(v))
     }
 
+    // Pre-compute all valid river mouth positions before routing.
+    // For each cell where RIVER_INTO_COAST fits, record the set of valid
+    // river entry directions. The BFS then just does a map lookup.
+    this.validMouths = this._findValidRiverMouths()
+    console.warn(`[RIVERS] Valid river mouth positions: ${this.validMouths.size}`)
+
     const sources = this._selectSources()
     console.warn(`[RIVERS] Sources selected: ${sources.length}`)
 
@@ -318,9 +324,13 @@ export class RiverRouter {
         // coast tiles (e.g. crater lakes).
         if (effectiveElev > exitEdgeLevel) continue
 
-        // --- Coast/water: goal, don't expand further ---
+        // --- Coast/water: goal if this is a pre-computed valid mouth ---
         if (isWater || hasCoast) {
-          goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          const validDirs = this.validMouths.get(nk)
+          const riverEntryDir = (d + 3) % 6
+          if (validDirs && validDirs.has(riverEntryDir)) {
+            goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          }
           continue
         }
 
@@ -585,6 +595,82 @@ export class RiverRouter {
       if (dir.dq === dq && dir.dr === dr && dir.ds === ds) return d
     }
     return -1
+  }
+
+  /**
+   * Scan all cells and find every position where RIVER_INTO_COAST could fit.
+   * Returns Map<cubeKey, Set<entryDir>> — each key maps to the set of
+   * river-entry directions (0–5) that produce a valid placement.
+   *
+   * Only checks the 5 non-river edges; the river-side neighbor will become
+   * a river tile at placement time so its current tile doesn't matter.
+   */
+  _findValidRiverMouths() {
+    const mouths = new Map() // cubeKey → Set<entryDir>
+
+    for (const [key, cell] of this.globalCells) {
+      const def = TILE_LIST[cell.type]
+      if (!def) continue
+
+      const edgeVals = Object.values(def.edges)
+      // Only consider coast/water cells (same filter as BFS goal detection)
+      const isWater = edgeVals.every(e => e === 'water')
+      const hasCoast = edgeVals.some(e => e === 'coast')
+      if (!isWater && !hasCoast) continue
+
+      const validDirs = new Set()
+      for (let entryDir = 0; entryDir < 6; entryDir++) {
+        if (this._isValidRiverMouth(cell, entryDir)) {
+          validDirs.add(entryDir)
+        }
+      }
+
+      if (validDirs.size > 0) {
+        mouths.set(key, validDirs)
+      }
+    }
+
+    return mouths
+  }
+
+  /**
+   * Check whether RIVER_INTO_COAST can fit at a coast cell with the river
+   * entering from `riverEntryDir` (0–5).  Used by _findValidRiverMouths
+   * to pre-compute valid mouth positions.
+   *
+   * Skips the river-edge neighbor (that cell will become a river tile later)
+   * and validates the remaining 5 edges against the actual surrounding tiles.
+   */
+  _isValidRiverMouth(cell, riverEntryDir) {
+    // RIVER_INTO_COAST has river edge at NW (index 5) unrotated.
+    const rotation = (riverEntryDir - 5 + 6) % 6
+    const rotatedEdges = rotateHexEdges(TILE_LIST[TileType.RIVER_INTO_COAST].edges, rotation)
+
+    for (let d = 0; d < 6; d++) {
+      // Skip the river-entry edge — that neighbor will become a river tile
+      if (d === riverEntryDir) continue
+
+      const dirName = HexDir[d]
+      const requiredEdge = rotatedEdges[dirName]
+      const oppDirName = HexOpposite[dirName]
+
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(cell.q + dir.dq, cell.r + dir.dr, cell.s + dir.ds)
+      const neighbor = this.globalCells.get(nk)
+
+      if (!neighbor) {
+        // Off-map — only compatible with water edges
+        if (requiredEdge !== 'water') return false
+        continue
+      }
+
+      const neighborEdges = rotateHexEdges(TILE_LIST[neighbor.type].edges, neighbor.rotation)
+      const neighborEdge = neighborEdges[oppDirName]
+
+      if (requiredEdge !== neighborEdge) return false
+    }
+
+    return true
   }
 
   /**
