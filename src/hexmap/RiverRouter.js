@@ -93,11 +93,20 @@ export class RiverRouter {
     this.riverCells.clear()
     this.rivers.length = 0
 
+    // Dump a sample cell for debugging
+    const firstEntry = this.globalCells.entries().next().value
+    if (firstEntry) {
+      const [k, v] = firstEntry
+      console.warn('[RIVERS] Sample cell:', k, JSON.stringify(v))
+    }
+
     const sources = this._selectSources()
+    console.warn(`[RIVERS] Sources selected: ${sources.length}`)
     for (let i = 0; i < sources.length; i++) {
       this._routeRiver(sources[i], i)
     }
 
+    console.warn(`[RIVERS] Routed ${this.rivers.length} rivers, ${this.riverCells.size} cells`)
     return { rivers: this.rivers, riverCells: this.riverCells }
   }
 
@@ -141,7 +150,7 @@ export class RiverRouter {
     // Log elevation distribution for debugging
     const dist = [...levelCounts.entries()].sort((a, b) => a[0] - b[0])
       .map(([l, c]) => `L${l}:${c}`).join(' ')
-    console.log(`[RIVERS] Elevation distribution: ${dist}, candidates (level≥${this.minSourceLevel}): ${candidates.length}`)
+    console.warn(`[RIVERS] Elevation distribution: ${dist}, candidates (level≥${this.minSourceLevel}): ${candidates.length}`)
 
     // Sort by weight descending — greedily pick, enforcing min distance
     candidates.sort((a, b) => b.weight - a.weight)
