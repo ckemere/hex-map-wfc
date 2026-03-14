@@ -318,9 +318,12 @@ export class RiverRouter {
         // coast tiles (e.g. crater lakes).
         if (effectiveElev > exitEdgeLevel) continue
 
-        // --- Coast/water: goal, don't expand further ---
+        // --- Coast/water: goal if RIVER_INTO_COAST fits, don't expand ---
         if (isWater || hasCoast) {
-          goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          const riverEntryDir = (d + 3) % 6
+          if (this._isValidRiverMouth(neighbor, riverEntryDir)) {
+            goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          }
           continue
         }
 
@@ -585,6 +588,46 @@ export class RiverRouter {
       if (dir.dq === dq && dir.dr === dr && dir.ds === ds) return d
     }
     return -1
+  }
+
+  /**
+   * Check whether RIVER_INTO_COAST can fit at a coast cell with the river
+   * entering from `riverEntryDir` (0–5).  Used during BFS to accept only
+   * coast goals where the river mouth tile is geometrically valid.
+   *
+   * Skips the river-edge neighbor (that cell will become a river tile later)
+   * and validates the remaining 5 edges against the actual surrounding tiles.
+   */
+  _isValidRiverMouth(cell, riverEntryDir) {
+    // RIVER_INTO_COAST has river edge at NW (index 5) unrotated.
+    const rotation = (riverEntryDir - 5 + 6) % 6
+    const rotatedEdges = rotateHexEdges(TILE_LIST[TileType.RIVER_INTO_COAST].edges, rotation)
+
+    for (let d = 0; d < 6; d++) {
+      // Skip the river-entry edge — that neighbor will become a river tile
+      if (d === riverEntryDir) continue
+
+      const dirName = HexDir[d]
+      const requiredEdge = rotatedEdges[dirName]
+      const oppDirName = HexOpposite[dirName]
+
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(cell.q + dir.dq, cell.r + dir.dr, cell.s + dir.ds)
+      const neighbor = this.globalCells.get(nk)
+
+      if (!neighbor) {
+        // Off-map — only compatible with water edges
+        if (requiredEdge !== 'water') return false
+        continue
+      }
+
+      const neighborEdges = rotateHexEdges(TILE_LIST[neighbor.type].edges, neighbor.rotation)
+      const neighborEdge = neighborEdges[oppDirName]
+
+      if (requiredEdge !== neighborEdge) return false
+    }
+
+    return true
   }
 
   /**
