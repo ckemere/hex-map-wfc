@@ -140,6 +140,7 @@ export class RiverDebugOverlay {
     mat.opacityNode = vertColor.a
     mat.transparent = true
     mat.depthWrite = false
+    mat.depthTest = false
     mat.side = DoubleSide
 
     this.slopeMesh = new Mesh(geom, mat)
@@ -213,6 +214,7 @@ export class RiverDebugOverlay {
     mat.opacityNode = vertColor.a
     mat.transparent = true
     mat.depthWrite = false
+    mat.depthTest = false
     mat.side = DoubleSide
 
     this.riverMesh = new Mesh(geom, mat)
