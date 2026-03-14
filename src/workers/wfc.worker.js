@@ -589,7 +589,10 @@ class HexWFCSolver {
           const prefix = this.options.gridId ? `[${this.options.gridId}] ` : ''
           this.log(`${prefix}WFC FAIL [neighbor conflict${loc}]`, 'red')
         }
-        return null
+        // Continue to next attempt — the unfixing loop above may have
+        // expanded currentSolveCells/currentFixedCells in-place, so a
+        // fresh re-init may resolve new boundary conflicts.
+        continue
       }
 
       // Main solve loop with backtracking
