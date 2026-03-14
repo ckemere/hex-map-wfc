@@ -285,15 +285,15 @@ export class WFCManager {
   /** Get default tile types for WFC
    * @param {Object} [options]
    * @param {boolean} [options.excludeRivers=false] - Exclude all river tile types from the solve
+   * @param {boolean} [options.excludeRoads=false] - Exclude all road tile types from the solve
    */
-  getDefaultTileTypes({ excludeRivers = false } = {}) {
+  getDefaultTileTypes({ excludeRivers = false, excludeRoads = false } = {}) {
     const types = []
     for (let i = 0; i < TILE_LIST.length; i++) {
-      if (excludeRivers) {
-        const edges = TILE_LIST[i].edges
-        const hasRiver = Object.values(edges).some(e => e === 'river')
-        if (hasRiver) continue
-      }
+      const edges = TILE_LIST[i].edges
+      const edgeValues = Object.values(edges)
+      if (excludeRivers && edgeValues.some(e => e === 'river')) continue
+      if (excludeRoads && edgeValues.some(e => e === 'road')) continue
       types.push(i)
     }
     return types
