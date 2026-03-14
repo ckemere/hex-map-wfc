@@ -31,6 +31,8 @@ import { random, setSeed } from '../SeededRandom.js'
 import { Sounds } from '../lib/Sounds.js'
 import { RiverRouter } from './RiverRouter.js'
 import { RiverDebugOverlay } from './RiverDebugOverlay.js'
+import { ForestPlacer } from './ForestPlacer.js'
+import { VillagePlacer } from './VillagePlacer.js'
 
 const LEVEL_HEIGHT = 0.5
 const TILE_SURFACE = 1
@@ -1300,6 +1302,44 @@ export class HexMap {
     const srcCount = router.rivers.length
     const pathCount = riverCells.size
     log(`[RIVERS] Routed ${srcCount} rivers, ${pathCount} cells`, 'color: #3388ff')
+
+    // Store riverCells for downstream placers
+    this._riverCells = riverCells
+
+    // Place forests and villages
+    this._placeZones()
+  }
+
+  /**
+   * Run forest and village placement on the current globalCells.
+   * Stores zone sets and triggers decoration repopulation.
+   */
+  _placeZones() {
+    const riverCells = this._riverCells || new Map()
+
+    // Step 4: Forest zones
+    const forestPlacer = new ForestPlacer(this.globalCells, riverCells)
+    this.forestCells = forestPlacer.place()
+    log(`[FORESTS] Placed ${this.forestCells.size} forest cells`, 'color: #228B22')
+
+    // Step 5: Village zones
+    const villagePlacer = new VillagePlacer(this.globalCells, riverCells, this.forestCells)
+    this.villageCells = villagePlacer.place()
+    log(`[VILLAGES] Placed ${this.villageCells.size} village cells`, 'color: #DAA520')
+
+    // Repopulate decorations with zone awareness
+    this._repopulateDecorationsWithZones()
+  }
+
+  /**
+   * Repopulate decorations on all grids, passing zone maps for guided placement.
+   */
+  _repopulateDecorationsWithZones() {
+    for (const grid of this.grids.values()) {
+      if (grid.state === HexGridState.POPULATED) {
+        grid.populateDecorations(this.forestCells, this.villageCells)
+      }
+    }
   }
 
   /** Apply river tile replacements to globalCells and visual grids. */
