@@ -284,8 +284,8 @@ export class WFCManager {
 
   /** Get default tile types for WFC
    * @param {Object} [options]
-   * @param {boolean} [options.excludeRivers=false] - Exclude all river tile types from the solve
-   * @param {boolean} [options.excludeRoads=false] - Exclude all road tile types from the solve
+   * @param {boolean} [options.excludeRivers=false] - Exclude all river tile types from the solve (normally true; rivers are placed post-WFC by RiverRouter)
+   * @param {boolean} [options.excludeRoads=false] - Exclude all road tile types from the solve (normally true; roads are placed post-WFC)
    */
   getDefaultTileTypes({ excludeRivers = false, excludeRoads = false } = {}) {
     const types = []
