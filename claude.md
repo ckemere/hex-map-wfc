@@ -42,28 +42,28 @@ The original WFC includes river tiles in the solve, which causes three problems:
 
 ## Development plan
 
-### Step 1 — Remove rivers from WFC ✅ DONE
+### Step 1A — Remove rivers from WFC ✅ DONE
 River tiles excluded from solve behind `excludeRivers` boolean option.
 
-### Step 2 — Remove roads from WFC ✅ DONE
+### Step 1B — Remove roads from WFC ✅ DONE
 Road tiles excluded from solve behind `excludeRoads` boolean option.
 
-## Step 3 — River routing algorithm ✅ DONE
+### Step 2 — River routing algorithm ✅ DONE (partially)
 Post-WFC second pass using solved elevation data from `globalCells`.
 
-### Architecture
+#### Architecture
 `RiverRouter` (`src/hexmap/RiverRouter.js`) takes `globalCells` and produces:
 - `riverCells`: Map<cubeKey, { type, riverIndex }> — every cell touched by a river
 - `rivers`: Array<{ source, path, endType }> — per-river metadata
 
-### Source placement
+#### Source placement
 Noise-weighted selection among high-elevation cells (level ≥ `minSourceLevel`,
 default 2). A hash-based noise field is multiplied by cell elevation to produce a
 source weight. Sources are greedily picked highest-weight-first, enforcing
 `minSourceDistance` (default 6) between them. Cells near the map edge or with
 coast/water/river edges are excluded.
 
-### Flow routing — BFS tree expansion
+#### Flow routing — BFS tree expansion
 Each river expands a Dijkstra-style BFS tree from its source through downhill and
 flat neighbors (using a `MinHeap` priority queue):
 
@@ -77,7 +77,7 @@ flat neighbors (using a `MinHeap` priority queue):
 - **`globalOwned`**: shared Map of cells committed by finalized rivers. Only
   written after a river's path is fully traced. Used for confluence detection.
 
-### Goal detection
+#### Goal detection
 The BFS tree stops expanding a branch when it hits:
 - **Coast/water tile** → `COAST_END` (preferred goal)
 - **Cell in `globalOwned`** from another river → `CONFLUENCE`
@@ -92,17 +92,17 @@ tiebroken by lowest cost.
 **Elevation check applies to all neighbors** including coast/water, preventing
 rivers from flowing uphill to high-elevation coast tiles (crater lakes).
 
-### Path extraction
+#### Path extraction
 Trace `cameFrom` pointers from the best goal back to the source. Mark cells
 in `riverCells` (for debug overlay) and `globalOwned` (for later rivers).
 
-### Confluence handling
+#### Confluence handling
 Rivers route highest-source-first. When river B's BFS tree touches river A's
 committed path (either directly or via adjacency), it records a confluence goal
 and terminates. This produces natural tributary merging. The adjacency check
 ensures rivers never run side-by-side on flat terrain.
 
-### River termination
+#### River termination
 - **Reaches coast/water** → `COAST_END`. Ideal outcome.
 - **Reaches existing river** → `CONFLUENCE`. Natural tributary merge.
 - **Reaches map edge** → `EDGE_END`. River flows off the edge.
@@ -111,7 +111,7 @@ ensures rivers never run side-by-side on flat terrain.
 
 ---
 
-## Step 3 remaining work: tile replacement
+### Step 2 remaining work: tile replacement
 
 Local re-solve. When placing a river tile, run a mini WFC on a small radius
 around the target cell, seeded with the river entry/exit face directions as hard
