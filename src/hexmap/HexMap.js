@@ -1286,6 +1286,7 @@ export class HexMap {
       this.riverOverlay = new RiverDebugOverlay(this.scene)
     }
     this.riverOverlay.update(riverCells, this.globalCells)
+    // Visibility is controlled by Debug View dropdown; hidden by default
     this.riverOverlay.setVisible(this._riverDebugVisible)
 
     const srcCount = router.rivers.length
@@ -1293,7 +1294,7 @@ export class HexMap {
     log(`[RIVERS] Routed ${srcCount} rivers, ${pathCount} cells`, 'color: #3388ff')
   }
 
-  /** Toggle the river debug overlay on/off */
+  /** Toggle the river debug overlay visibility (driven by Debug View dropdown) */
   setRiverDebugVisible(visible) {
     this._riverDebugVisible = visible
     if (this.riverOverlay) this.riverOverlay.setVisible(visible)

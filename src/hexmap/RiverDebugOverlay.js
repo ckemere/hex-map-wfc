@@ -16,7 +16,9 @@ import {
   Float32BufferAttribute,
   Mesh,
   MeshBasicNodeMaterial,
+  DoubleSide,
 } from 'three/webgpu'
+import { attribute, vec4 } from 'three/tsl'
 import { cubeToOffset } from './HexWFCCore.js'
 import { RiverCellType } from './RiverRouter.js'
 
@@ -43,6 +45,7 @@ export class RiverDebugOverlay {
 
   /**
    * Build (or rebuild) the overlay mesh from river cell data.
+   * Renders directly in the main scene (not in the PostFX overlay pass).
    * @param {Map<string, { type: string, riverIndex: number }>} riverCells
    * @param {Map<string, Object>} globalCells — HexMap.globalCells for elevation lookup
    */
@@ -56,7 +59,7 @@ export class RiverDebugOverlay {
     const vertsPerCell = 6 * 3
     const floatsPerCell = vertsPerCell * 3
     const positions = new Float32Array(cellCount * floatsPerCell)
-    const colors = new Float32Array(cellCount * floatsPerCell)
+    const colors = new Float32Array(cellCount * vertsPerCell * 4) // RGBA per vertex
 
     let cellIdx = 0
     for (const [key, info] of riverCells) {
@@ -74,8 +77,8 @@ export class RiverDebugOverlay {
       const cy = level * LEVEL_HEIGHT + 1 + Y_OFFSET // 1 = TILE_SURFACE
 
       const color = COLORS[info.type] || COLORS[RiverCellType.PATH]
-      const base = cellIdx * floatsPerCell
-      const colorBase = cellIdx * floatsPerCell
+      const posBase = cellIdx * floatsPerCell
+      const colBase = cellIdx * vertsPerCell * 4
 
       for (let i = 0; i < 6; i++) {
         const a1 = i * Math.PI / 3
@@ -85,20 +88,17 @@ export class RiverDebugOverlay {
         const x2 = cx + Math.sin(a2) * HEX_RADIUS
         const z2 = cz + Math.cos(a2) * HEX_RADIUS
 
-        const off = base + i * 9
-        // center
-        positions[off]     = cx; positions[off + 1] = cy; positions[off + 2] = cz
-        // vertex 1
+        const off = posBase + i * 9
+        positions[off]     = cx;  positions[off + 1] = cy; positions[off + 2] = cz
         positions[off + 3] = x1; positions[off + 4] = cy; positions[off + 5] = z1
-        // vertex 2
         positions[off + 6] = x2; positions[off + 7] = cy; positions[off + 8] = z2
 
-        // color for all 3 verts
-        const cOff = colorBase + i * 9
+        const cOff = colBase + i * 12
         for (let v = 0; v < 3; v++) {
-          colors[cOff + v * 3]     = color.r
-          colors[cOff + v * 3 + 1] = color.g
-          colors[cOff + v * 3 + 2] = color.b
+          colors[cOff + v * 4]     = color.r
+          colors[cOff + v * 4 + 1] = color.g
+          colors[cOff + v * 4 + 2] = color.b
+          colors[cOff + v * 4 + 3] = 0.55
         }
       }
 
@@ -107,19 +107,21 @@ export class RiverDebugOverlay {
 
     const geom = new BufferGeometry()
     geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
-    geom.setAttribute('color', new Float32BufferAttribute(colors, 3))
+    geom.setAttribute('color', new Float32BufferAttribute(colors, 4))
 
-    const mat = new MeshBasicNodeMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-      side: 2, // DoubleSide
-    })
+    // Use TSL node to read vertex color attribute directly
+    const mat = new MeshBasicNodeMaterial()
+    const vertColor = attribute('color', 'vec4')
+    mat.colorNode = vertColor.rgb
+    mat.opacityNode = vertColor.a
+    mat.transparent = true
+    mat.depthWrite = false
+    mat.side = DoubleSide
 
     this.mesh = new Mesh(geom, mat)
     this.mesh.renderOrder = 997
     this.mesh.frustumCulled = false
+    this.mesh.visible = false // hidden until debug view selects it
     this.scene.add(this.mesh)
   }
 
