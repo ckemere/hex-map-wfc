@@ -65,7 +65,6 @@ export class GUIManager {
       showOutlines: false,
       excludeRivers: false,
       excludeRoads: false,
-      showRiverDebug: false,
     },
     decoration: {
       treeNoiseFreq: 0.05,
@@ -123,10 +122,12 @@ export class GUIManager {
       app.perspCamera.updateProjectionMatrix()
     })
 
-    // Debug view
-    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6 }
+    // Debug view — 'rivers' is handled locally (not a PostFX debug mode)
+    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6, rivers: -1 }
     gui.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
-      app.debugView.value = viewMap[v]
+      const isRivers = v === 'rivers'
+      app.debugView.value = isRivers ? 0 : viewMap[v]
+      app.city.setRiverDebugVisible(isRivers)
     })
 
     // Visual toggles at top level
@@ -184,9 +185,6 @@ export class GUIManager {
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
     gui.add(allParams.roads, 'excludeRivers').name('Exclude Rivers')
     gui.add(allParams.roads, 'excludeRoads').name('Exclude Roads')
-    gui.add(allParams.roads, 'showRiverDebug').name('River Debug').onChange((v) => {
-      app.city.setRiverDebugVisible(v)
-    })
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')

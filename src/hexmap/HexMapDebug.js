@@ -249,10 +249,6 @@ export class HexMapDebug {
     if (hm.hoverFill) {
       overlays.push(hm.hoverFill)
     }
-    // River debug overlay
-    if (hm.riverOverlay?.mesh) {
-      overlays.push(hm.riverOverlay.mesh)
-    }
     return overlays
   }
 }
