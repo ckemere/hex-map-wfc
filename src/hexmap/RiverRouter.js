@@ -239,7 +239,7 @@ export class RiverRouter {
           exitEdgeLevel,
           isEdge: false,
           isWater,
-          isCoast: isCoast || hasCoast,
+          isCoast: hasCoast,
         })
       }
 
