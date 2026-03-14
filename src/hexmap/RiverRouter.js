@@ -466,7 +466,10 @@ export class RiverRouter {
    * Compute tile replacements for all routed rivers.
    * Must be called after route().
    *
-   * @returns {Array<{ q, r, s, type, rotation, level }>} tiles to replace
+   * @returns {{
+   *   replacements: Array<{ q, r, s, type, rotation, level }>,
+   *   coastResolves: Array<{ coastCell: Object, lastLandCell: Object, lastLandTile: { type, rotation } }>
+   * }}
    */
   computeReplacements() {
     // 1. Collect all river direction indices per cell across all rivers.
@@ -474,6 +477,8 @@ export class RiverRouter {
     //    a Set of direction indices where a river edge is needed.
     const cellDirs = new Map()  // cubeKey → Set<dirIndex>
     const cellEndType = new Map() // cubeKey → endType (for terminal cells)
+    // Track the last-land-cell for each coast-end river (cell before coast goal)
+    const coastPredecessor = new Map() // coastKey → lastLandKey
 
     for (const river of this.rivers) {
       const { path, endType } = river
@@ -504,15 +509,19 @@ export class RiverRouter {
           }
         }
 
-        // Track end type for terminal cells
+        // Track end type and predecessor for terminal cells
         if (i === path.length - 1) {
           cellEndType.set(key, endType)
+          if (endType === RiverCellType.COAST_END && i >= 1) {
+            coastPredecessor.set(key, path[i - 1])
+          }
         }
       }
     }
 
     // 2. For each cell, select the best river tile + rotation.
     const replacements = []
+    const coastResolves = []
     let replaced = 0, skipped = 0
 
     for (const [key, dirs] of cellDirs) {
@@ -522,14 +531,21 @@ export class RiverRouter {
       const endType = cellEndType.get(key)
 
       // Coast-end cells: try RIVER_INTO_COAST with full edge validation.
-      // If it doesn't fit (usual case — coastline geometry rarely matches),
-      // skip tile replacement entirely and leave the original coast tile.
+      // If it doesn't fit, queue for local WFC re-solve.
       if (endType === RiverCellType.COAST_END) {
         const coastTile = this._selectCoastTile(cell, dirs)
         if (coastTile) {
           replacements.push(coastTile)
           replaced++
         } else {
+          // Queue for local re-solve. Record the last land cell and
+          // the river tile we'd assign to it, so the caller can use it
+          // as an initialCollapse constraint.
+          const lastLandKey = coastPredecessor.get(key)
+          const lastLandCell = lastLandKey ? this.globalCells.get(lastLandKey) : null
+          const lastLandDirs = lastLandKey ? cellDirs.get(lastLandKey) : null
+          const lastLandTile = lastLandDirs ? selectRiverTile(lastLandDirs) : null
+          coastResolves.push({ coastCell: cell, lastLandCell, lastLandTile })
           skipped++
         }
         continue
@@ -550,8 +566,8 @@ export class RiverRouter {
       replaced++
     }
 
-    console.warn(`[RIVERS] Tile replacements: ${replaced} replaced, ${skipped} skipped`)
-    return replacements
+    console.warn(`[RIVERS] Tile replacements: ${replaced} replaced, ${skipped} skipped, ${coastResolves.length} coast re-solves queued`)
+    return { replacements, coastResolves }
   }
 
   /**
