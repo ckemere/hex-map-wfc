@@ -136,6 +136,9 @@ export class RiverRouter {
       const hasRiver = edgeVals.some(e => e === 'river')
       if (hasRiver) continue
 
+      // Exclude cells near the map edge (rivers starting at the edge look bad)
+      if (this._countEdgeNeighbors(cell.q, cell.r, cell.s) > 0) continue
+
       // Weight by elevation and noise
       const noise = coordNoise(cell.q, cell.r, this.noiseFreq)
       const weight = level * noise
@@ -239,6 +242,7 @@ export class RiverRouter {
           isEdge: false,
           isWater,
           isCoast: hasCoast,
+          edgeAdjacentCount: this._countEdgeNeighbors(nq, nr, ns),
         })
       }
 
@@ -358,6 +362,11 @@ export class RiverRouter {
         if (angleDist === 1) score -= 0.2
       }
 
+      // Penalize cells near the map edge to prevent edge-hugging
+      if (c.edgeAdjacentCount > 0) {
+        score += 2.0 * c.edgeAdjacentCount
+      }
+
       // Jitter
       score += (random() - 0.5) * this.jitter
 
@@ -368,5 +377,19 @@ export class RiverRouter {
     }
 
     return best
+  }
+
+  /**
+   * Count how many of a cell's 6 neighbors are off the map edge.
+   * Used to penalize edge-adjacent cells during routing.
+   */
+  _countEdgeNeighbors(q, r, s) {
+    let count = 0
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
+      if (!this.globalCells.has(nk)) count++
+    }
+    return count
   }
 }
