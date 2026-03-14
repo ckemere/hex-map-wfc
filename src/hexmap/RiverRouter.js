@@ -305,20 +305,22 @@ export class RiverRouter {
         const isWater = edgeVals.every(e => e === 'water')
         const hasCoast = edgeVals.some(e => e === 'coast')
 
-        // --- Coast/water: goal, don't expand further ---
-        if (isWater || hasCoast) {
-          goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
-          continue
-        }
-
-        // --- Elevation check: only expand to downhill or flat ---
+        // --- Elevation check (applied to ALL neighbors including coast/water) ---
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
         const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
 
-        // Only allow downhill or flat (relative to exit edge)
+        // Only allow downhill or flat (relative to exit edge).
+        // This prevents rivers from flowing uphill to reach high-elevation
+        // coast tiles (e.g. crater lakes).
         if (effectiveElev > exitEdgeLevel) continue
+
+        // --- Coast/water: goal, don't expand further ---
+        if (isWater || hasCoast) {
+          goals.push({ goalKey: nk, goalType: GoalType.COAST, traceTo: currentKey, cost: currentCost })
+          continue
+        }
 
         // --- Adjacency confluence check ---
         // If this candidate cell is adjacent to a cell owned by another river,
