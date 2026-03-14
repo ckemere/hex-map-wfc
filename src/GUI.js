@@ -65,6 +65,7 @@ export class GUIManager {
       showOutlines: false,
       excludeRivers: false,
       excludeRoads: false,
+      showRiverDebug: false,
     },
     decoration: {
       treeNoiseFreq: 0.05,
@@ -183,6 +184,9 @@ export class GUIManager {
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
     gui.add(allParams.roads, 'excludeRivers').name('Exclude Rivers')
     gui.add(allParams.roads, 'excludeRoads').name('Exclude Roads')
+    gui.add(allParams.roads, 'showRiverDebug').name('River Debug').onChange((v) => {
+      app.city.setRiverDebugVisible(v)
+    })
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
