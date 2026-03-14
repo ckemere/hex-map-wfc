@@ -546,17 +546,23 @@ export class RiverRouter {
       const endType = cellEndType.get(key)
 
       // Coast-end cells: place RIVER_INTO_COAST directly.
-      // BFS guarantees valid mouth geometry via pre-computed validMouths
-      // and direction-constrained expansion, so this should always succeed.
+      // BFS already validated the 5 non-river edges via the pre-computed
+      // validMouths map, so we just compute the rotation and place it.
       if (endType === RiverCellType.COAST_END) {
-        const coastTile = this._selectCoastTile(cell, dirs)
-        if (coastTile) {
-          replacements.push(coastTile)
-          replaced++
-        } else {
-          console.warn(`[RIVERS] RIVER_INTO_COAST failed at (${cell.q},${cell.r},${cell.s}) — BFS should have prevented this`)
+        if (dirs.size !== 1) {
+          console.warn(`[RIVERS] Coast cell at (${cell.q},${cell.r},${cell.s}) has ${dirs.size} river dirs, expected 1`)
           skipped++
+          continue
         }
+        const riverDir = dirs.values().next().value
+        const rotation = (riverDir - 5 + 6) % 6
+        replacements.push({
+          q: cell.q, r: cell.r, s: cell.s,
+          type: TileType.RIVER_INTO_COAST,
+          rotation,
+          level: cell.level,
+        })
+        replaced++
         continue
       }
 
@@ -670,52 +676,6 @@ export class RiverRouter {
     return true
   }
 
-  /**
-   * Try to place RIVER_INTO_COAST at a coast-end cell.
-   * Validates that ALL 6 neighbor edges are compatible before placing.
-   * Returns null if no valid rotation exists.
-   */
-  _selectCoastTile(cell, dirs) {
-    if (dirs.size !== 1) return null
-    const riverDir = dirs.values().next().value
-
-    // RIVER_INTO_COAST has river edge at NW (index 5) unrotated.
-    // Only one rotation puts the river edge in the right direction.
-    const rotation = (riverDir - 5 + 6) % 6
-    const rotatedEdges = rotateHexEdges(TILE_LIST[TileType.RIVER_INTO_COAST].edges, rotation)
-
-    // Validate every edge against the actual neighbor
-    for (let d = 0; d < 6; d++) {
-      const dirName = HexDir[d]
-      const requiredEdge = rotatedEdges[dirName]
-      const oppDirName = HexOpposite[dirName]
-
-      const dir = CUBE_DIRS[d]
-      const nk = cubeKey(cell.q + dir.dq, cell.r + dir.dr, cell.s + dir.ds)
-      const neighbor = this.globalCells.get(nk)
-
-      if (!neighbor) {
-        // Off-map neighbor — only compatible with water edges
-        // (water tiles at map boundary are common; coast/river are not)
-        if (requiredEdge !== 'water') return null
-        continue
-      }
-
-      // Get the neighbor's edge on the opposite face
-      const neighborEdges = rotateHexEdges(TILE_LIST[neighbor.type].edges, neighbor.rotation)
-      const neighborEdge = neighborEdges[oppDirName]
-
-      // Edge types must match for adjacency to be valid
-      if (requiredEdge !== neighborEdge) return null
-    }
-
-    return {
-      q: cell.q, r: cell.r, s: cell.s,
-      type: TileType.RIVER_INTO_COAST,
-      rotation,
-      level: cell.level,
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
