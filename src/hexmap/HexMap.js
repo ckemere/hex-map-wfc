@@ -1284,16 +1284,10 @@ export class HexMap {
     const { riverCells } = router.route()
 
     // Compute and apply tile replacements
-    const { replacements, coastResolves } = router.computeReplacements()
+    const { replacements } = router.computeReplacements()
     if (replacements.length > 0) {
       this._applyRiverReplacements(replacements)
       log(`[RIVERS] Applied ${replacements.length} tile replacements`, 'color: #3388ff')
-    }
-
-    // Run local WFC re-solves for coast endpoints that need it
-    if (coastResolves.length > 0) {
-      const resolved = await this._resolveCoastEndpoints(coastResolves)
-      log(`[RIVERS] Coast re-solves: ${resolved}/${coastResolves.length} succeeded`, 'color: #3388ff')
     }
 
     if (!this.riverOverlay) {
@@ -1322,70 +1316,6 @@ export class HexMap {
     this.applyTileResultsToGrids(replacements)
   }
 
-  /**
-   * Run local WFC re-solves around coast endpoints where RIVER_INTO_COAST
-   * couldn't be placed directly. Each re-solve covers a radius-2 region
-   * centered on the coast cell, with the last land cell's river tile as
-   * an initialCollapse constraint.
-   *
-   * @param {Array} coastResolves — from RiverRouter.computeReplacements()
-   * @returns {number} count of successful re-solves
-   */
-  async _resolveCoastEndpoints(coastResolves) {
-    // For coast re-solves we need river tiles enabled
-    const tileTypes = this.getDefaultTileTypes({ excludeRivers: false, excludeRoads: true })
-    let resolved = 0
-
-    for (const { coastCell, coastRotation, lastLandCell, lastLandTile } of coastResolves) {
-      if (!coastCell) continue
-
-      // Define solve region: radius 4 around the coast cell.
-      // Needs to be large enough that the fixed boundary (at distance 5)
-      // is past the coast transition zone — mostly pure water or grass tiles
-      // whose edges are easy to satisfy, giving the solver room to reshape
-      // the coastline around the river mouth.
-      const solveCells = cubeCoordsInRadius(coastCell.q, coastCell.r, coastCell.s, 4)
-        .filter(c => this.globalCells.has(cubeKey(c.q, c.r, c.s)))
-
-      const fixedCells = this.getFixedCellsForRegion(solveCells)
-
-      // Force RIVER_INTO_COAST at the coast cell with the correct rotation,
-      // and force the last land cell to its river tile. The WFC solver then
-      // reshapes the surrounding coastline to accommodate both.
-      const initialCollapses = [{
-        q: coastCell.q, r: coastCell.r, s: coastCell.s,
-        type: TileType.RIVER_INTO_COAST,
-        rotation: coastRotation,
-        level: coastCell.level,
-      }]
-      if (lastLandCell && lastLandTile) {
-        initialCollapses.push({
-          q: lastLandCell.q, r: lastLandCell.r, s: lastLandCell.s,
-          type: lastLandTile.type,
-          rotation: lastLandTile.rotation,
-          level: lastLandCell.level,
-        })
-      }
-
-      const result = await this.solveWfcAsync(solveCells, fixedCells, {
-        tileTypes,
-        maxTries: 5,
-        initialCollapses,
-        slopeBias: App.instance?.params?.roads?.slopeBias ?? 1.0,
-        gridId: `river-coast-${coastCell.q},${coastCell.r},${coastCell.s}`,
-      })
-
-      if (result.success && result.tiles) {
-        this._applyRiverReplacements(result.tiles)
-        this.addToGlobalCells('river-coast', result.tiles)
-        resolved++
-      } else {
-        log(`[RIVERS] Coast re-solve failed at (${coastCell.q},${coastCell.r},${coastCell.s})`, 'color: orange')
-      }
-    }
-
-    return resolved
-  }
 
   /** Toggle the river debug overlay visibility (driven by Debug View dropdown) */
   setRiverDebugVisible(visible) {
