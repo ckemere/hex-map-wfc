@@ -972,8 +972,10 @@ export class RoadRouter {
     const sep = Math.min(b - a, 6 - (b - a))
     if (sep !== 3) return null // must be straight
 
-    // Road goes E(1)-W(4) unrotated. rotation = (a - 1 + 6) % 6
-    const rotation = (a - 1 + 6) % 6
+    // The road slope tile must preserve the original slope's rotation so
+    // the high edges stay on the correct side. The road axis (E-W unrotated)
+    // is already guaranteed to align by canTraverseSlope().
+    const rotation = cell.rotation
 
     const def = TILE_LIST[cell.type]
     const levelInc = def?.levelIncrement ?? 1
