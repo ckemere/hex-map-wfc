@@ -1394,8 +1394,19 @@ export class HexMap {
     const riverCells = this._riverCells || new Map()
     const villageCells = this.villageCells || new Set()
 
-    log(`[ROADS] globalCells: ${this.globalCells.size}, villageCells: ${villageCells.size}`, 'color: #cc8833')
-    const router = new RoadRouter(this.globalCells, riverCells, villageCells)
+    const roadDensity = App.instance?.params?.roads?.roadDensity ?? 0.5
+    // Map 0–1 slider to maxTerminals range (0 → 0 terminals, 1 → 30 terminals)
+    const maxTerminals = Math.round(roadDensity * 30)
+    log(`[ROADS] globalCells: ${this.globalCells.size}, villageCells: ${villageCells.size}, density: ${roadDensity}`, 'color: #cc8833')
+
+    if (maxTerminals === 0) {
+      log('[ROADS] Road density is 0 — skipping road routing', 'color: #cc8833')
+      if (this.roadOverlay) this.roadOverlay.update(new Map(), this.globalCells)
+      this._roadCells = new Map()
+      return
+    }
+
+    const router = new RoadRouter(this.globalCells, riverCells, villageCells, { maxTerminals })
     const { roadCells } = router.route()
 
     if (!this.roadOverlay) {
