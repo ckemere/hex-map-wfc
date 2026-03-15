@@ -117,9 +117,9 @@ export function buildTerrainDensity(globalCells, riverCells, options = {}) {
       : Math.max(0, 1 - (cell.level - villageMaxLevel) * 0.4)
 
     // Combine: noise × terrain modifiers
-    // Rivers have a stronger pull for villages than forests
+    // Rivers have a much stronger pull for villages than forests
     const vDensity = baseVillageNoise * elevationVillage * coastFade
-      * (1 + riverAttraction * 0.6)  // strong river boost
+      * (1 + riverAttraction * 1.0)  // strong river boost (up to 2×)
 
     villageDensity.set(key, Math.min(1, vDensity))
   }

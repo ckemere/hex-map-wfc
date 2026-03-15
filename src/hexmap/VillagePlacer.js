@@ -19,14 +19,14 @@ export class VillagePlacer {
    * @param {Set<string>} forestCells — ForestPlacer output (cubeKeys to exclude)
    * @param {Object} [options]
    * @param {number} [options.threshold]             — density threshold; defaults to building threshold
-   * @param {number} [options.minVillageDistance=6]   — minimum hex distance between village centers
+   * @param {number} [options.minVillageDistance=4]   — minimum hex distance between village centers
    * @param {number} [options.clusterRadius=1]       — include neighbors within this radius
    */
   constructor(villageDensity, forestCells, options = {}) {
     this.villageDensity = villageDensity
     this.forestCells = forestCells || new Set()
     this.threshold = options.threshold ?? null  // null = use global building threshold
-    this.minVillageDistance = options.minVillageDistance ?? 6
+    this.minVillageDistance = options.minVillageDistance ?? 4
     this.clusterRadius = options.clusterRadius ?? 1
   }
 
