@@ -31,6 +31,8 @@ export const RiverCellType = {
   COAST_END: 'coast_end',
   EDGE_END: 'edge_end',
   BASIN_END: 'basin_end',
+  SLOPE: 'slope',           // on a slope tile with levelIncrement 1 (has tile)
+  SLOPE_MISSING: 'slope_missing', // on a slope tile with levelIncrement > 1 (no tile)
 }
 
 // ---------------------------------------------------------------------------
@@ -179,8 +181,30 @@ export class RiverRouter {
       this._routeRiver(sources[i], i, globalOwned)
     }
 
+    // Post-pass: tag river cells on slope tiles for debug overlay
+    this._tagSlopeCells()
+
     console.warn(`[RIVERS] Routed ${this.rivers.length} rivers, ${this.riverCells.size} cells`)
     return { rivers: this.rivers, riverCells: this.riverCells }
+  }
+
+  /**
+   * Tag river PATH cells that sit on slope tiles so the debug overlay
+   * can highlight them. Only re-tags PATH cells (not source/confluence/etc).
+   */
+  _tagSlopeCells() {
+    for (const [key, info] of this.riverCells) {
+      if (info.type !== RiverCellType.PATH) continue
+      const cell = this.globalCells.get(key)
+      if (!cell) continue
+      const def = TILE_LIST[cell.type]
+      if (!def?.highEdges?.length) continue
+      if (def.levelIncrement === 1) {
+        info.type = RiverCellType.SLOPE
+      } else {
+        info.type = RiverCellType.SLOPE_MISSING
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

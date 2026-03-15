@@ -3,12 +3,14 @@
  * routed river paths before tile replacement.
  *
  * Colours (river cells):
- *   source       → red        (#ff3333)
- *   path         → blue       (#3388ff)
- *   confluence   → magenta    (#ff33ff)
- *   coast_end    → cyan       (#33ffcc)
- *   edge_end     → yellow     (#ffcc33)
- *   basin_end    → orange     (#ff8833)
+ *   source        → red        (#ff3333)
+ *   path          → blue       (#3388ff)
+ *   confluence    → magenta    (#ff33ff)
+ *   coast_end     → cyan       (#33ffcc)
+ *   edge_end      → yellow     (#ffcc33)
+ *   basin_end     → orange     (#ff8833)
+ *   slope         → green      (#33ff66) — on slope tile, has river slope tile
+ *   slope_missing → bright red (#ff0033) — on slope tile, NO river slope tile
  *
  * Slope tiles are shown as a background layer:
  *   low edges    → green tint
@@ -33,7 +35,9 @@ const COLORS = {
   [RiverCellType.CONFLUENCE]: { r: 1.0, g: 0.2, b: 1.0 },
   [RiverCellType.COAST_END]:  { r: 0.2, g: 1.0, b: 0.8 },
   [RiverCellType.EDGE_END]:   { r: 1.0, g: 0.8, b: 0.2 },
-  [RiverCellType.BASIN_END]:  { r: 1.0, g: 0.53, b: 0.2 },
+  [RiverCellType.BASIN_END]:    { r: 1.0, g: 0.53, b: 0.2 },
+  [RiverCellType.SLOPE]:        { r: 0.2, g: 1.0, b: 0.4 },
+  [RiverCellType.SLOPE_MISSING]: { r: 1.0, g: 0.0, b: 0.2 },
 }
 
 // Slope edge colors
