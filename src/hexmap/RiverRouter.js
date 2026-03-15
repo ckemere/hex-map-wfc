@@ -362,10 +362,14 @@ export class RiverRouter {
 
         // --- Adjacency confluence check ---
         // If this candidate cell is adjacent to a cell owned by another river,
-        // treat it as a confluence goal. This prevents two rivers from running
-        // in parallel on neighboring cells (especially on flat terrain).
+        // extend the path through nk to the actual owned cell so the
+        // confluence tile (3-way junction) lands on the existing river.
         if (this._isAdjacentToOwnedRiver(nq, nr, ns, globalOwned)) {
-          goals.push({ goalKey: nk, goalType: GoalType.CONFLUENCE, traceTo: currentKey, cost: currentCost })
+          const ownedKey = this._findAdjacentOwnedRiver(nq, nr, ns, globalOwned)
+          // Add nk to BFS tree so it can be traced through
+          cameFrom.set(nk, currentKey)
+          entryDir.set(nk, (d + 3) % 6)
+          goals.push({ goalKey: ownedKey, goalType: GoalType.CONFLUENCE, traceTo: nk, cost: currentCost })
           continue
         }
 
@@ -480,6 +484,19 @@ export class RiverRouter {
       if (globalOwned.has(nk)) return true
     }
     return false
+  }
+
+  /**
+   * Find the cubeKey of an adjacent cell that belongs to a previously
+   * committed river. Returns the first match.
+   */
+  _findAdjacentOwnedRiver(q, r, s, globalOwned) {
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
+      if (globalOwned.has(nk)) return nk
+    }
+    return null
   }
 
   /**
