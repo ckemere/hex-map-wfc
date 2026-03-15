@@ -1084,19 +1084,41 @@ function selectRoadTile(requiredDirs) {
       if (match !== null) return { type: template.type, rotation: match }
     }
 
-    // Fallback to ROAD_D
-    const rotation = (sorted[0] - 0 + 6) % 6
-    return { type: TileType.ROAD_D, rotation }
+    // No exact match — find best approximate (most overlapping directions)
+    return bestApproxTile3(requiredDirs)
   }
 
-  // 4+ edges — no tiles exist, use ROAD_D as best approximation
+  // 4+ edges — no tiles exist, find best 3-edge approximation
   if (n >= 4) {
-    const dir = requiredDirs.values().next().value
-    const rotation = (dir - 0 + 6) % 6
-    return { type: TileType.ROAD_D, rotation }
+    return bestApproxTile3(requiredDirs)
   }
 
   return null
+}
+
+/**
+ * Find the best approximate 3-edge tile when no exact match exists.
+ * Scores each template × rotation by how many required directions it covers.
+ */
+function bestApproxTile3(requiredDirs) {
+  let bestType = null, bestRotation = 0, bestScore = -1
+
+  for (const template of ROAD_TILES_3) {
+    for (let r = 0; r < 6; r++) {
+      const rotated = template.dirs.map(d => (d + r) % 6)
+      let score = 0
+      for (const d of rotated) {
+        if (requiredDirs.has(d)) score++
+      }
+      if (score > bestScore) {
+        bestScore = score
+        bestType = template.type
+        bestRotation = r
+      }
+    }
+  }
+
+  return bestType !== null ? { type: bestType, rotation: bestRotation } : null
 }
 
 /**
