@@ -183,6 +183,33 @@ villageDensity = min(1, baseNoise × elevationShape × coastFade × (1 + riverAt
 4. Expand each center to all 6 hex neighbors (radius 1) that are in the
    density map and not forest.
 
+TODO: Prose description of what we would like for villages
+Settlement scoring
+The settlement placement becomes quite rich when you combine all the factors:
+Strong positive signals:
+	-	River-coast boundary — where a river meets the sea is historically the single most powerful settlement attractor. Ports, fishing, fresh water and salt water trade all converge there
+	-	River adjacency — any flat tile near a river, not just the mouth
+	-	Lake shore — same logic as river, fresh water access
+Moderate positive signals:
+	-	Forest edge — the boundary between forest and open land, not deep forest. Shelter, building materials, hunting, but still farmable land nearby
+	-	Flat low-elevation grass — easy to build on and farm
+Negative signals:
+	-	Deep forest — occasional settlements but rare, and they'd feel like isolated woodcutter camps or hermitages rather than villages
+	-	Cliff or slope adjacency — defensible occasionally but generally avoided
+	-	High elevation — rare, maybe a fortress or monastery as a special case
+The composite score for each candidate cell would multiply these factors together, giving you a probability surface across the whole map. You then sample from that surface with some noise to avoid all settlements landing on identical optimal spots.
+
+With the current decoration system you actually have more to work with than you might think. Settlement character comes from which buildings are placed and what surrounds them, and both of those are already data-driven through BuildingDefs weights and the tree placement system.
+Right now every settlement draws from the same BuildingDefs weighted pool. The simplest change is to define settlement type profiles — each one just a different weighting table over the existing building meshes. For example:
+  - Riverside village — higher weight on building_market, building_home, bridges nearby, no trees within the settlement boundary
+  - Forest camp — higher weight on smaller structures, trees allowed right up to building edges, lower building count overall
+  - Coastal port — windmills, the existing port/dock logic already biased toward coast, boats if they exist in the mesh set
+  - River mouth town — the richest settlement, highest building count, market and church weighted up, road connections mandatory
+
+None of this requires new 3D assets. It's purely about how you weight the existing pool and what rules govern tree clearance around buildings.
+
+   
+
 ### Building instance placement (`Decorations.populateBuildings()`)
 Within village zones, buildings are placed in priority order:
 
