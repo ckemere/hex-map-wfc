@@ -33,6 +33,7 @@ import { RiverRouter } from './RiverRouter.js'
 import { RiverDebugOverlay } from './RiverDebugOverlay.js'
 import { ForestPlacer } from './ForestPlacer.js'
 import { VillagePlacer } from './VillagePlacer.js'
+import { buildTerrainDensity } from './TerrainNoise.js'
 
 const LEVEL_HEIGHT = 0.5
 const TILE_SURFACE = 1
@@ -1313,18 +1314,24 @@ export class HexMap {
 
   /**
    * Run forest and village placement on the current globalCells.
-   * Stores zone sets and triggers decoration repopulation.
+   * First builds terrain-shaped density fields, then thresholds them.
    */
   _placeZones() {
     const riverCells = this._riverCells || new Map()
 
-    // Step 4: Forest zones
-    const forestPlacer = new ForestPlacer(this.globalCells, riverCells)
+    // Build terrain-shaped density fields (noise × terrain features)
+    const { forestDensity, villageDensity } = buildTerrainDensity(
+      this.globalCells, riverCells
+    )
+    log(`[TERRAIN-NOISE] Built density maps: ${forestDensity.size} forest, ${villageDensity.size} village candidates`, 'color: #8B4513')
+
+    // Step 4: Forest zones — threshold the shaped density
+    const forestPlacer = new ForestPlacer(forestDensity)
     this.forestCells = forestPlacer.place()
     log(`[FORESTS] Placed ${this.forestCells.size} forest cells`, 'color: #228B22')
 
-    // Step 5: Village zones
-    const villagePlacer = new VillagePlacer(this.globalCells, riverCells, this.forestCells)
+    // Step 5: Village zones — threshold + cluster, excluding forests
+    const villagePlacer = new VillagePlacer(villageDensity, this.forestCells)
     this.villageCells = villagePlacer.place()
     log(`[VILLAGES] Placed ${this.villageCells.size} village cells`, 'color: #DAA520')
 
