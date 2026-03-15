@@ -445,14 +445,9 @@ export class RoadRouter {
         // Water/coast: impassable
         if (isWater || hasCoast) continue
 
-        // River cells: impassable unless a compatible crossing tile
+        // River cells: only crossable at straight rivers in a compatible direction
         if (this.riverCells.has(nk)) {
-          const neighborName = def.name
-          if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
-            if (!this._isCrossingCompatible(neighbor, d)) continue
-          } else {
-            continue // all other river cells are impassable
-          }
+          if (!this._canCrossRiver(nk, d)) continue
         }
 
         // Elevation & slope checks
@@ -508,19 +503,36 @@ export class RoadRouter {
   }
 
   /**
-   * Check whether a road in direction d is compatible with a river crossing tile.
-   * RIVER_CROSSING_A: road at SE(2), NW(5); river at E(1), W(4)
-   * RIVER_CROSSING_B: road at NE(0), SW(3); river at E(1), W(4)
+   * Check whether a road traveling in direction d can cross the river at
+   * the given cell. Only straight rivers (RIVER_A, RIVER_A_CURVY) can be
+   * crossed, and only at the angles supported by crossing tiles:
+   *   CROSSING_A: road at SE(2),NW(5) relative to river axis
+   *   CROSSING_B: road at NE(0),SW(3) relative to river axis
+   *
+   * Sources, confluences, ends, and curved rivers cannot be crossed.
    */
-  _isCrossingCompatible(cell, roadExitDir) {
+  _canCrossRiver(neighborKey, roadExitDir) {
+    const cell = this.globalCells.get(neighborKey)
+    if (!cell) return false
+
     const def = TILE_LIST[cell.type]
     if (!def) return false
 
-    const rotatedEdges = rotateHexEdges(def.edges, cell.rotation)
-    const exitDirName = CUBE_DIRS[roadExitDir].name
-    const entryDirName = CUBE_DIRS[(roadExitDir + 3) % 6].name
+    // Only straight rivers can be crossed
+    const name = def.name
+    if (name !== 'RIVER_A' && name !== 'RIVER_A_CURVY') return false
 
-    return rotatedEdges[exitDirName] === 'road' || rotatedEdges[entryDirName] === 'road'
+    // River axis is E(1)-W(4) rotated by cell.rotation
+    const rot = cell.rotation
+    const roadEntryDir = (roadExitDir + 3) % 6
+
+    // CROSSING_A: road at SE(2),NW(5) rotated
+    if (roadEntryDir === (2 + rot) % 6 || roadEntryDir === (5 + rot) % 6) return true
+
+    // CROSSING_B: road at NE(0),SW(3) rotated
+    if (roadEntryDir === (0 + rot) % 6 || roadEntryDir === (3 + rot) % 6) return true
+
+    return false
   }
 
   /** Trace a path from goal back to source via cameFrom map. */
@@ -1084,16 +1096,15 @@ function selectRoadTile(requiredDirs) {
       if (match !== null) return { type: template.type, rotation: match }
     }
 
-    // Fallback to ROAD_D
-    const rotation = (sorted[0] - 0 + 6) % 6
-    return { type: TileType.ROAD_D, rotation }
+    // Routing should guarantee a valid 3-edge intersection
+    console.warn(`[ROADS] No exact 3-edge tile match for directions [${sorted}] — routing bug`)
+    return null
   }
 
-  // 4+ edges — no tiles exist, use ROAD_D as best approximation
+  // 4+ edges — no tiles exist
   if (n >= 4) {
-    const dir = requiredDirs.values().next().value
-    const rotation = (dir - 0 + 6) % 6
-    return { type: TileType.ROAD_D, rotation }
+    console.warn(`[ROADS] ${n}-edge junction has no tile — routing bug`)
+    return null
   }
 
   return null
