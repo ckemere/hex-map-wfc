@@ -151,23 +151,25 @@ export class RoadRouter {
    * @param {Map} riverCells — RiverRouter.riverCells (cubeKey → { type, riverIndex })
    * @param {Set} villageCells — VillagePlacer output (cubeKey set)
    * @param {Object} [options]
-   * @param {number} [options.minTerminalDistance=5] — minimum hex distance between terminals
+   * @param {number} [options.minTerminalDistance=3] — minimum hex distance between terminals
    * @param {number} [options.maxExpansion=1200]     — max cells expanded per Dijkstra pass
    * @param {number} [options.edgePenalty=3.0]       — cost penalty for map-edge proximity
    * @param {number} [options.riverPenalty=8.0]      — cost for crossing river without crossing tile
    * @param {number} [options.crossingReward=0.5]    — cost for using an existing crossing tile
-   * @param {number} [options.maxTerminals=12]       — max number of road terminals
+   * @param {number} [options.maxTerminals=20]       — max number of road terminals
+   * @param {number} [options.adjacencyPenalty=4.0]  — cost for stepping next to an already-committed road
    */
   constructor(globalCells, riverCells, villageCells, options = {}) {
     this.globalCells = globalCells
     this.riverCells = riverCells || new Map()
     this.villageCells = villageCells || new Set()
-    this.minTerminalDistance = options.minTerminalDistance ?? 5
+    this.minTerminalDistance = options.minTerminalDistance ?? 3
     this.maxExpansion = options.maxExpansion ?? 1200
     this.edgePenalty = options.edgePenalty ?? 3.0
     this.riverPenalty = options.riverPenalty ?? 8.0
     this.crossingReward = options.crossingReward ?? 0.5
-    this.maxTerminals = options.maxTerminals ?? 12
+    this.maxTerminals = options.maxTerminals ?? 20
+    this.adjacencyPenalty = options.adjacencyPenalty ?? 4.0
 
     /** @type {Map<string, { type: string }>} cubeKey → road cell info */
     this.roadCells = new Map()
@@ -216,8 +218,9 @@ export class RoadRouter {
     const augmentedEdges = this._augmentLeaves(terminals, mstEdges, candidateEdges)
     console.warn(`[ROADS] Total edges after augmentation: ${augmentedEdges.length}`)
 
-    // Phase 5 — Path commitment and junction detection
-    this._commitPaths(terminals, augmentedEdges)
+    // Phase 5 — Re-route paths with adjacency awareness, then commit
+    const finalEdges = this._rerouteWithMerging(augmentedEdges, terminalSet)
+    this._commitPaths(terminals, finalEdges)
     console.warn(`[ROADS] Road cells: ${this.roadCells.size}`)
 
     return { roadEdges: this.roadEdges, roadCells: this.roadCells }
@@ -228,20 +231,26 @@ export class RoadRouter {
   // ---------------------------------------------------------------------------
 
   _selectTerminals() {
-    // Count village neighbors within radius 2 for each cell to measure village density
+    // Build a density map: for each cell, count how many village cells are
+    // within radius 2. This gives a smooth "village proximity" field.
     const villageDensity = new Map()
     for (const vk of this.villageCells) {
       const vc = parseCubeKey(vk)
-      // Mark the village cell and its neighbors
-      for (let d = 0; d < 6; d++) {
-        const dir = CUBE_DIRS[d]
-        const nk = cubeKey(vc.q + dir.dq, vc.r + dir.dr, vc.s + dir.ds)
-        villageDensity.set(nk, (villageDensity.get(nk) || 0) + 1)
+      // Radius 2 splash: the village cell itself + ring-1 + ring-2
+      for (let dq = -2; dq <= 2; dq++) {
+        for (let dr = Math.max(-2, -dq - 2); dr <= Math.min(2, -dq + 2); dr++) {
+          const ds = -dq - dr
+          const nk = cubeKey(vc.q + dq, vc.r + dr, vc.s + ds)
+          const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds))
+          // Weight falls off with distance: 3 for self, 2 for ring-1, 1 for ring-2
+          const w = 3 - dist
+          villageDensity.set(nk, (villageDensity.get(nk) || 0) + w)
+        }
       }
-      villageDensity.set(vk, (villageDensity.get(vk) || 0) + 2) // extra weight for village cell itself
     }
 
-    // Score candidates: prefer cells in/near villages, on walkable terrain
+    // Score candidates: prefer cells in/near villages, on walkable terrain.
+    // Any cell adjacent to a village is a candidate (low threshold).
     const candidates = []
     for (const [key, cell] of this.globalCells) {
       const def = TILE_LIST[cell.type]
@@ -255,14 +264,14 @@ export class RoadRouter {
       if (edgeVals.some(e => e === 'road')) continue
 
       const vDensity = villageDensity.get(key) || 0
+      if (vDensity <= 0) continue // must be near a village
+
       const noise = coordNoise(cell.q, cell.r, 0.12)
 
-      // Weight: village density (strongly) + noise (weakly for variety)
-      const weight = vDensity * 3.0 + noise * 0.5
+      // Weight: village density dominates, noise adds variety
+      const weight = vDensity + noise * 0.3
 
-      if (weight > 0.3) {
-        candidates.push({ key, cell, weight })
-      }
+      candidates.push({ key, cell, weight })
     }
 
     candidates.sort((a, b) => b.weight - a.weight)
@@ -270,9 +279,14 @@ export class RoadRouter {
     const terminals = []
     const termCoords = []
 
+    // First pass: place a terminal in every village cluster that doesn't
+    // already have one. Track which village cells are "covered".
+    const coveredVillages = new Set()
+
     for (const { key, cell } of candidates) {
       if (terminals.length >= this.maxTerminals) break
 
+      // Check minimum distance from existing terminals
       let tooClose = false
       for (const tc of termCoords) {
         if (cubeDistance(cell.q, cell.r, cell.s, tc.q, tc.r, tc.s) < this.minTerminalDistance) {
@@ -284,8 +298,50 @@ export class RoadRouter {
 
       terminals.push(key)
       termCoords.push({ q: cell.q, r: cell.r, s: cell.s })
+
+      // Mark nearby village cells as covered
+      for (const vk of this.villageCells) {
+        const vc = parseCubeKey(vk)
+        if (cubeDistance(cell.q, cell.r, cell.s, vc.q, vc.r, vc.s) <= this.minTerminalDistance) {
+          coveredVillages.add(vk)
+        }
+      }
     }
 
+    // Second pass: any uncovered village cluster gets a terminal even if
+    // it's closer than minTerminalDistance to an existing one (but still
+    // enforce distance 2 to avoid overlapping terminals).
+    if (coveredVillages.size < this.villageCells.size) {
+      for (const { key, cell } of candidates) {
+        if (terminals.length >= this.maxTerminals) break
+        if (coveredVillages.has(key)) continue
+
+        // Must be a village cell itself (not just nearby)
+        if (!this.villageCells.has(key)) continue
+
+        // Enforce minimum distance of 2 from other terminals
+        let tooClose = false
+        for (const tc of termCoords) {
+          if (cubeDistance(cell.q, cell.r, cell.s, tc.q, tc.r, tc.s) < 2) {
+            tooClose = true
+            break
+          }
+        }
+        if (tooClose) continue
+
+        terminals.push(key)
+        termCoords.push({ q: cell.q, r: cell.r, s: cell.s })
+
+        for (const vk of this.villageCells) {
+          const vc = parseCubeKey(vk)
+          if (cubeDistance(cell.q, cell.r, cell.s, vc.q, vc.r, vc.s) <= this.minTerminalDistance) {
+            coveredVillages.add(vk)
+          }
+        }
+      }
+    }
+
+    console.warn(`[ROADS] Village coverage: ${coveredVillages.size}/${this.villageCells.size} village cells covered`)
     return terminals
   }
 
@@ -542,7 +598,176 @@ export class RoadRouter {
   }
 
   // ---------------------------------------------------------------------------
-  // Phase 5 — Path commitment and junction detection
+  // Phase 5a — Re-route paths to merge with already-committed roads
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Re-route each selected edge (MST + augmentation) in cost order, using
+   * a shared globalOwned map. The Dijkstra cost function penalizes cells
+   * adjacent to owned roads (to prevent parallel running) and rewards cells
+   * that ARE owned roads (to encourage merging).
+   */
+  _rerouteWithMerging(edges, terminalSet) {
+    const sorted = [...edges].sort((a, b) => a.cost - b.cost)
+    const globalOwned = new Set() // cells committed so far
+    const result = []
+
+    for (const edge of sorted) {
+      // Re-run Dijkstra from edge.from to edge.to with adjacency awareness
+      const path = this._dijkstraPointToPoint(edge.from, edge.to, globalOwned, terminalSet)
+      if (path) {
+        result.push({ from: edge.from, to: edge.to, cost: edge.cost, path })
+        // Commit this path's cells to globalOwned
+        for (const key of path) globalOwned.add(key)
+      } else {
+        // Fallback: use original path
+        result.push(edge)
+        for (const key of edge.path) globalOwned.add(key)
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Point-to-point Dijkstra with adjacency-aware cost function.
+   * - Cells on existing roads (globalOwned): cost 0.2 (merge bonus)
+   * - Cells adjacent to existing roads: cost penalty (discourages parallel)
+   * - Normal cells: cost 1.0
+   */
+  _dijkstraPointToPoint(fromKey, toKey, globalOwned, terminalSet) {
+    const source = this.globalCells.get(fromKey)
+    const target = this.globalCells.get(toKey)
+    if (!source || !target) return null
+
+    const cameFrom = new Map()
+    const entryDir = new Map()
+    const costSoFar = new Map()
+    const frontier = new MinHeap()
+
+    cameFrom.set(fromKey, null)
+    entryDir.set(fromKey, null)
+    costSoFar.set(fromKey, 0)
+    frontier.push({ key: fromKey, cost: 0 })
+
+    let expanded = 0
+
+    while (frontier.size > 0 && expanded < this.maxExpansion) {
+      const { key: currentKey, cost: currentCost } = frontier.pop()
+
+      if (currentCost > costSoFar.get(currentKey)) continue
+      expanded++
+
+      // Reached target — trace back
+      if (currentKey === toKey) {
+        return this._tracePath(cameFrom, toKey)
+      }
+
+      const current = this.globalCells.get(currentKey)
+      if (!current) continue
+
+      // Valid exits (tile-aware direction constraints)
+      const e = entryDir.get(currentKey)
+      // At terminals or on already-owned road cells, allow any exit direction
+      // (the road is already established, so we can branch from it freely)
+      const isOnRoad = globalOwned.has(currentKey)
+      const isTerminal = terminalSet.has(currentKey)
+      const validExits = (e === null || isOnRoad || isTerminal)
+        ? [0, 1, 2, 3, 4, 5]
+        : [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+
+      for (const d of validExits) {
+        const dir = CUBE_DIRS[d]
+        const nq = current.q + dir.dq
+        const nr = current.r + dir.dr
+        const ns = current.s + dir.ds
+        const nk = cubeKey(nq, nr, ns)
+        const neighbor = this.globalCells.get(nk)
+
+        if (!neighbor) continue
+
+        const def = TILE_LIST[neighbor.type]
+        if (!def) continue
+
+        const edgeVals = Object.values(def.edges)
+        if (edgeVals.every(ev => ev === 'water')) continue
+        if (edgeVals.some(ev => ev === 'coast')) continue
+
+        // Elevation check
+        const exitEdgeLevel = edgeLevelAt(current, d)
+        const oppositeDir = (d + 3) % 6
+        const entryEdgeLvl = edgeLevelAt(neighbor, oppositeDir)
+
+        if (exitEdgeLevel !== entryEdgeLvl) {
+          const neighborDef = TILE_LIST[neighbor.type]
+          const isSlope = neighborDef?.highEdges?.length > 0
+          if (!isSlope) continue
+          const slopeName = neighborDef.name
+          if (slopeName !== 'ROAD_A_SLOPE_LOW' && slopeName !== 'ROAD_A_SLOPE_HIGH' &&
+              slopeName !== 'GRASS_SLOPE_LOW' && slopeName !== 'GRASS_SLOPE_HIGH') {
+            continue
+          }
+        }
+
+        // --- Adjacency-aware cost ---
+        let stepCost
+        if (globalOwned.has(nk)) {
+          // Merging into existing road: very cheap
+          stepCost = 0.2
+        } else {
+          stepCost = 1.0
+
+          // Penalty for running adjacent to existing roads (parallel avoidance)
+          if (this._isAdjacentToOwnedRoad(nq, nr, ns, globalOwned)) {
+            stepCost += this.adjacencyPenalty
+          }
+
+          // River penalty/reward
+          if (this.riverCells.has(nk)) {
+            const neighborName = def.name
+            if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
+              if (this._isCrossingCompatible(neighbor, d)) {
+                stepCost = this.crossingReward
+              } else {
+                stepCost = this.riverPenalty
+              }
+            } else {
+              stepCost = this.riverPenalty
+            }
+          }
+
+          // Edge penalty
+          const edgeCount = this._countEdgeNeighbors(nq, nr, ns)
+          if (edgeCount > 0) stepCost += this.edgePenalty * edgeCount
+        }
+
+        const newCost = currentCost + stepCost
+        if (!costSoFar.has(nk) || newCost < costSoFar.get(nk)) {
+          costSoFar.set(nk, newCost)
+          cameFrom.set(nk, currentKey)
+          entryDir.set(nk, oppositeDir)
+          frontier.push({ key: nk, cost: newCost })
+        }
+      }
+    }
+
+    return null // couldn't reach target
+  }
+
+  /**
+   * Check if any neighbor of (q,r,s) is in the globalOwned set.
+   */
+  _isAdjacentToOwnedRoad(q, r, s, globalOwned) {
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
+      if (globalOwned.has(nk)) return true
+    }
+    return false
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 5b — Path commitment and junction detection
   // ---------------------------------------------------------------------------
 
   _commitPaths(terminals, edges) {
@@ -578,29 +803,35 @@ export class RoadRouter {
           }
         }
 
-        // Determine cell type
-        const wasAlreadyRoad = this.roadCells.has(key)
-        let cellType
-
-        if (wasAlreadyRoad) {
-          // Cell already on a road — it's now a junction
-          cellType = RoadCellType.JUNCTION
-        } else if (terminalSet.has(key)) {
-          cellType = RoadCellType.TERMINAL
-        } else {
-          cellType = RoadCellType.PATH
+        // Preliminary type (will be refined in second pass)
+        if (!this.roadCells.has(key)) {
+          if (terminalSet.has(key)) {
+            this.roadCells.set(key, { type: RoadCellType.TERMINAL })
+          } else {
+            this.roadCells.set(key, { type: RoadCellType.PATH })
+          }
         }
-
-        this.roadCells.set(key, { type: cellType })
       }
     }
 
-    // Mark road-end cells: terminals that end up with degree 1
-    for (const key of terminalSet) {
+    // Second pass: classify cells based on their final direction count.
+    // A junction is a cell with 3+ road directions (a genuine T or cross).
+    // A cell with 2 directions that was visited by multiple paths is just
+    // a shared road segment, not a junction.
+    for (const [key, info] of this.roadCells) {
       const dirs = this.roadEdges.get(key)
-      if (dirs && dirs.size === 1) {
-        this.roadCells.set(key, { type: RoadCellType.ROAD_END })
+      if (!dirs) continue
+
+      if (dirs.size >= 3) {
+        this.roadCells.set(key, { type: RoadCellType.JUNCTION })
+      } else if (terminalSet.has(key)) {
+        if (dirs.size === 1) {
+          this.roadCells.set(key, { type: RoadCellType.ROAD_END })
+        } else {
+          this.roadCells.set(key, { type: RoadCellType.TERMINAL })
+        }
       }
+      // dirs.size <= 2 non-terminal → stays PATH
     }
   }
 
