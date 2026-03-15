@@ -189,10 +189,10 @@ export class GUIManager {
     gui.add(allParams.roads, 'includeRiversInWFC').name('Rivers in WFC')
     gui.add(allParams.roads, 'includeRoadsInWFC').name('Roads in WFC')
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
-    gui.add({ regenerateRoads: () => app.city._routeRoads() }, 'regenerateRoads').name('Regenerate Roads')
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
+    gui.add({ regenerateRoads: () => app.city._routeRoads() }, 'regenerateRoads').name('Regenerate Roads')
     gui.add({ reset: () => {
       app.city.reset()
       app.city.setHelpersVisible(allParams.debug.hexGrid)
