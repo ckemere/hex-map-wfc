@@ -271,7 +271,7 @@ export function levelColor(level) {
 
 // Instance limits for BatchedMesh (per-type caps)
 export const MAX_TREES = 100
-export const MAX_BUILDINGS = 15
+export const MAX_BUILDINGS = 40
 export const MAX_BRIDGES = 30
 export const MAX_WATERLILIES = 10
 export const MAX_FLOWERS = 40

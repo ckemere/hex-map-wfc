@@ -737,6 +737,7 @@ export class HexMap {
     const animDuration = await grid.populateFromCubeResults(resultForGrid, collapseOrderForGrid, ctx.center, {
       animate,
       animateDelay,
+      deferDecorations: options.deferDecorations,
     })
 
     // Apply current helper visibility state
@@ -954,7 +955,7 @@ export class HexMap {
    * Handle click on a grid (placeholder button clicked)
    * @param {HexGrid} grid - Grid that was clicked
    */
-  async onGridClick(grid, { skipPrune = false, animate } = {}) {
+  async onGridClick(grid, { skipPrune = false, animate, deferDecorations = false } = {}) {
     if (grid.state !== HexGridState.PLACEHOLDER) return 0
 
     const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
@@ -963,6 +964,7 @@ export class HexMap {
     const animDuration = await this.populateGrid(grid, [], {
       animate: animate ?? params?.roads?.animateWFC ?? false,
       animateDelay: params?.roads?.animateDelay ?? 20,
+      deferDecorations,
     }) || 0
 
     if (!skipPrune) {
@@ -1023,7 +1025,7 @@ export class HexMap {
       }
       if (grid.state === HexGridState.PLACEHOLDER) {
         Sounds.play('pop', 1.0, 0.2, 0.7)
-        await this.onGridClick(grid, { skipPrune: true, animate })
+        await this.onGridClick(grid, { skipPrune: true, animate, deferDecorations: true })
         if (grid.state !== HexGridState.POPULATED) failedGrids.push(key)
         if (grid.animationDone) animPromises.push(grid.animationDone)
       }
