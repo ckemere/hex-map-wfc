@@ -606,10 +606,31 @@ export class RiverRouter {
         continue
       }
 
+      // If the original tile was a slope (levelIncrement: 1) and the river
+      // is straight, use the slope river variant instead of flat.
+      let finalType = match.type
+      let finalRotation = match.rotation
+      const originalDef = TILE_LIST[cell.type]
+      if (originalDef?.highEdges?.length > 0 && originalDef.levelIncrement === 1) {
+        if (finalType === TileType.RIVER_A || finalType === TileType.RIVER_A_CURVY) {
+          // Slope axis is E(1)-W(4) rotated by cell.rotation.
+          // River must align with this axis for the slope tile to work.
+          const slopeAxisA = (1 + cell.rotation) % 6
+          const slopeAxisB = (4 + cell.rotation) % 6
+          const riverDirA = (1 + finalRotation) % 6
+          const riverDirB = (4 + finalRotation) % 6
+          if ((riverDirA === slopeAxisA && riverDirB === slopeAxisB) ||
+              (riverDirA === slopeAxisB && riverDirB === slopeAxisA)) {
+            finalType = TileType.RIVER_A_SLOPE_LOW
+            finalRotation = cell.rotation
+          }
+        }
+      }
+
       replacements.push({
         q: cell.q, r: cell.r, s: cell.s,
-        type: match.type,
-        rotation: match.rotation,
+        type: finalType,
+        rotation: finalRotation,
         level: cell.level,
       })
       replaced++
