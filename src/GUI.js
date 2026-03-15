@@ -122,12 +122,14 @@ export class GUIManager {
       app.perspCamera.updateProjectionMatrix()
     })
 
-    // Debug view — 'rivers' is handled locally (not a PostFX debug mode)
-    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6, rivers: -1 }
+    // Debug view — 'rivers'/'roads' are handled locally (not a PostFX debug mode)
+    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6, rivers: -1, roads: -2 }
     gui.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       const isRivers = v === 'rivers'
-      app.debugView.value = isRivers ? 0 : viewMap[v]
+      const isRoads = v === 'roads'
+      app.debugView.value = (isRivers || isRoads) ? 0 : viewMap[v]
       app.city.setRiverDebugVisible(isRivers)
+      app.city.setRoadDebugVisible(isRoads)
     })
 
     // Visual toggles at top level
