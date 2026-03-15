@@ -611,7 +611,8 @@ export class RiverRouter {
       let finalType = match.type
       let finalRotation = match.rotation
       const originalDef = TILE_LIST[cell.type]
-      if (originalDef?.highEdges?.length > 0 && originalDef.levelIncrement === 1) {
+      const isSlope = originalDef?.highEdges?.length > 0
+      if (isSlope && originalDef.levelIncrement === 1) {
         if (finalType === TileType.RIVER_A || finalType === TileType.RIVER_A_CURVY) {
           // Slope axis is E(1)-W(4) rotated by cell.rotation.
           // River must align with this axis for the slope tile to work.
@@ -623,8 +624,12 @@ export class RiverRouter {
               (riverDirA === slopeAxisB && riverDirB === slopeAxisA)) {
             finalType = TileType.RIVER_A_SLOPE_LOW
             finalRotation = cell.rotation
+          } else {
+            console.warn(`[RIVERS] Slope at (${cell.q},${cell.r},${cell.s}) river axis [${riverDirA},${riverDirB}] doesn't match slope axis [${slopeAxisA},${slopeAxisB}], cell.rotation=${cell.rotation}, original=${originalDef.name}`)
           }
         }
+      } else if (isSlope) {
+        console.warn(`[RIVERS] Slope at (${cell.q},${cell.r},${cell.s}) has levelIncrement=${originalDef.levelIncrement}, no river slope tile available, original=${originalDef.name}`)
       }
 
       replacements.push({
