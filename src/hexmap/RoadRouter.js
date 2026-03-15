@@ -445,9 +445,15 @@ export class RoadRouter {
         // Water/coast: impassable
         if (isWater || hasCoast) continue
 
-        // River sources and confluences: impassable
-        const riverInfo = this.riverCells.get(nk)
-        if (riverInfo && (riverInfo.type === 'source' || riverInfo.type === 'confluence')) continue
+        // River cells: impassable unless a compatible crossing tile
+        if (this.riverCells.has(nk)) {
+          const neighborName = def.name
+          if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
+            if (!this._isCrossingCompatible(neighbor, d)) continue
+          } else {
+            continue // all other river cells are impassable
+          }
+        }
 
         // Elevation & slope checks
         const exitEdgeLevel = edgeLevelAt(current, d)
@@ -476,21 +482,9 @@ export class RoadRouter {
         // --- Cost computation ---
         let stepCost = 1.0 // base cost: flat per cell
 
-        // River cell penalty/reward
-        const isRiverCell = this.riverCells.has(nk)
-        if (isRiverCell) {
-          const neighborName = def.name
-          if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
-            // Existing crossing: check that road direction is compatible
-            if (this._isCrossingCompatible(neighbor, d)) {
-              stepCost = this.crossingReward
-            } else {
-              stepCost = this.riverPenalty
-            }
-          } else {
-            // Regular river cell: heavy penalty
-            stepCost = this.riverPenalty
-          }
+        // Crossing tiles: reward
+        if (this.riverCells.has(nk)) {
+          stepCost = this.crossingReward
         }
 
         // Edge-of-map penalty
@@ -720,6 +714,16 @@ export class RoadRouter {
         if (edgeVals.every(ev => ev === 'water')) continue
         if (edgeVals.some(ev => ev === 'coast')) continue
 
+        // River cells: impassable unless a compatible crossing tile
+        if (this.riverCells.has(nk)) {
+          const neighborName = def.name
+          if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
+            if (!this._isCrossingCompatible(neighbor, d)) continue
+          } else {
+            continue
+          }
+        }
+
         // Elevation & slope checks
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
@@ -751,23 +755,14 @@ export class RoadRouter {
         } else {
           stepCost = 1.0
 
+          // Crossing tiles: reward
+          if (this.riverCells.has(nk)) {
+            stepCost = this.crossingReward
+          }
+
           // Penalty for running adjacent to existing roads (parallel avoidance)
           if (this._isAdjacentToOwnedRoad(nq, nr, ns, globalOwned)) {
             stepCost += this.adjacencyPenalty
-          }
-
-          // River penalty/reward
-          if (this.riverCells.has(nk)) {
-            const neighborName = def.name
-            if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
-              if (this._isCrossingCompatible(neighbor, d)) {
-                stepCost = this.crossingReward
-              } else {
-                stepCost = this.riverPenalty
-              }
-            } else {
-              stepCost = this.riverPenalty
-            }
           }
 
           // Edge penalty
@@ -938,8 +933,14 @@ export class RoadRouter {
 
   /**
    * Select a river crossing tile for a cell that has both road and river.
-   * RIVER_CROSSING_A: river E,W + road SE,NW (unrotated)
-   * RIVER_CROSSING_B: river E,W + road NE,SW (unrotated)
+   * The crossing must preserve the existing river tile's rotation so the
+   * river edges stay aligned with neighboring river tiles.
+   *
+   * RIVER_CROSSING_A unrotated: river E(1),W(4) + road SE(2),NW(5)
+   * RIVER_CROSSING_B unrotated: river E(1),W(4) + road NE(0),SW(3)
+   *
+   * The river axis is E(1)-W(4) rotated by the existing tile's rotation.
+   * The road must cross at ±60° from the river axis.
    */
   _selectCrossingTile(cell, roadDirs) {
     if (roadDirs.size !== 2) return null
@@ -948,20 +949,22 @@ export class RoadRouter {
     const sep = Math.min(b - a, 6 - (b - a))
     if (sep !== 3) return null // roads must be opposite (straight through)
 
-    // Try RIVER_CROSSING_A: road at SE(2), NW(5) unrotated
-    for (let r = 0; r < 6; r++) {
-      const rd0 = (2 + r) % 6, rd1 = (5 + r) % 6
-      if ((rd0 === a && rd1 === b) || (rd0 === b && rd1 === a)) {
-        return { type: TileType.RIVER_CROSSING_A, rotation: r }
-      }
+    // Use the existing river tile's rotation as the base.
+    // The river runs along E(1)-W(4) rotated by cell.rotation.
+    const rot = cell.rotation
+
+    // RIVER_CROSSING_A: road at SE(2),NW(5) rotated
+    const crossA_rd0 = (2 + rot) % 6, crossA_rd1 = (5 + rot) % 6
+    if ((crossA_rd0 === a && crossA_rd1 === b) || (crossA_rd0 === b && crossA_rd1 === a)) {
+      return { type: TileType.RIVER_CROSSING_A, rotation: rot }
     }
-    // Try RIVER_CROSSING_B: road at NE(0), SW(3) unrotated
-    for (let r = 0; r < 6; r++) {
-      const rd0 = (0 + r) % 6, rd1 = (3 + r) % 6
-      if ((rd0 === a && rd1 === b) || (rd0 === b && rd1 === a)) {
-        return { type: TileType.RIVER_CROSSING_B, rotation: r }
-      }
+
+    // RIVER_CROSSING_B: road at NE(0),SW(3) rotated
+    const crossB_rd0 = (0 + rot) % 6, crossB_rd1 = (3 + rot) % 6
+    if ((crossB_rd0 === a && crossB_rd1 === b) || (crossB_rd0 === b && crossB_rd1 === a)) {
+      return { type: TileType.RIVER_CROSSING_B, rotation: rot }
     }
+
     return null
   }
 
