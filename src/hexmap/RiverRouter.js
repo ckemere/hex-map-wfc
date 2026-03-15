@@ -17,7 +17,7 @@
  * that can be applied via HexMap.applyTileResultsToGrids().
  */
 
-import { cubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
+import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
 import { TILE_LIST, TileType, HexDir, HexOpposite, rotateHexEdges } from './HexTileData.js'
 import { random } from '../SeededRandom.js'
 
