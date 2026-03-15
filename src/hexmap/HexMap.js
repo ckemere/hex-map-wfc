@@ -31,6 +31,8 @@ import { random, setSeed } from '../SeededRandom.js'
 import { Sounds } from '../lib/Sounds.js'
 import { RiverRouter } from './RiverRouter.js'
 import { RiverDebugOverlay } from './RiverDebugOverlay.js'
+import { RoadRouter } from './RoadRouter.js'
+import { RoadDebugOverlay } from './RoadDebugOverlay.js'
 import { ForestPlacer } from './ForestPlacer.js'
 import { VillagePlacer } from './VillagePlacer.js'
 import { buildTerrainDensity } from './TerrainNoise.js'
@@ -106,6 +108,10 @@ export class HexMap {
     // River debug overlay
     this.riverOverlay = null  // created lazily after scene is ready
     this._riverDebugVisible = false
+
+    // Road debug overlay
+    this.roadOverlay = null
+    this._roadDebugVisible = false
 
     // Helper visibility state
     this.helpersVisible = false
@@ -1337,6 +1343,9 @@ export class HexMap {
     this.villageCells = villagePlacer.place()
     log(`[VILLAGES] Placed ${this.villageCells.size} village cells`, 'color: #DAA520')
 
+    // Route roads after villages are placed
+    this._routeRoads()
+
     // Repopulate decorations with zone awareness
     this._repopulateDecorationsWithZones()
   }
@@ -1371,6 +1380,40 @@ export class HexMap {
   setRiverDebugVisible(visible) {
     this._riverDebugVisible = visible
     if (this.riverOverlay) this.riverOverlay.setVisible(visible)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Road routing & debug overlay
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Run road routing on the current globalCells and update the debug overlay.
+   * Called automatically after village placement.
+   */
+  _routeRoads() {
+    const riverCells = this._riverCells || new Map()
+    const villageCells = this.villageCells || new Set()
+
+    log(`[ROADS] globalCells: ${this.globalCells.size}, villageCells: ${villageCells.size}`, 'color: #cc8833')
+    const router = new RoadRouter(this.globalCells, riverCells, villageCells)
+    const { roadCells } = router.route()
+
+    if (!this.roadOverlay) {
+      this.roadOverlay = new RoadDebugOverlay(this.scene)
+    }
+    this.roadOverlay.update(roadCells, this.globalCells)
+    this.roadOverlay.setVisible(this._roadDebugVisible)
+
+    const termCount = [...roadCells.values()].filter(c => c.type === 'terminal').length
+    log(`[ROADS] Routed roads: ${termCount} terminals, ${roadCells.size} cells`, 'color: #cc8833')
+
+    this._roadCells = roadCells
+  }
+
+  /** Toggle the road debug overlay visibility (driven by Debug View dropdown) */
+  setRoadDebugVisible(visible) {
+    this._roadDebugVisible = visible
+    if (this.roadOverlay) this.roadOverlay.setVisible(visible)
   }
 
   /**
@@ -1688,8 +1731,9 @@ export class HexMap {
     this._waterSideIndex = null
     this.clearTileLabels()
 
-    // Dispose river debug overlay
+    // Dispose debug overlays
     if (this.riverOverlay) this.riverOverlay.dispose()
+    if (this.roadOverlay) this.roadOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
