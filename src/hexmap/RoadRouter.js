@@ -133,6 +133,27 @@ function edgeLevelAt(cell, dirIndex) {
   return getEdgeLevel(cell.type, cell.rotation, dirName, cell.level)
 }
 
+/**
+ * Check if a road can traverse a slope tile in the given direction.
+ * Slope tiles only allow roads straight across the slope axis (E-W unrotated).
+ * The road entry direction (oppositeDir) must match one of the two road-axis
+ * directions after accounting for the slope's rotation.
+ *
+ * @param {Object} cell — the slope cell
+ * @param {number} entryDirIndex — direction the road enters the cell from (0–5)
+ * @returns {boolean}
+ */
+function canTraverseSlope(cell, entryDirIndex) {
+  const def = TILE_LIST[cell.type]
+  if (!def?.highEdges?.length) return true // not a slope, allow
+
+  // The slope's road axis is E(1)-W(4) unrotated, rotated by cell.rotation.
+  // Road can only enter from one of these two directions.
+  const axisA = (1 + cell.rotation) % 6  // E rotated
+  const axisB = (4 + cell.rotation) % 6  // W rotated
+  return entryDirIndex === axisA || entryDirIndex === axisB
+}
+
 /** Simple hash-based noise in [0,1) for terminal weighting. */
 function coordNoise(q, r, freq) {
   const x = q * freq
@@ -424,26 +445,28 @@ export class RoadRouter {
         // Water/coast: impassable
         if (isWater || hasCoast) continue
 
-        // Check elevation: roads can only go straight up/down slopes.
-        // Exit edge level must match entry edge level of neighbor (no cliff crossing).
+        // Elevation & slope checks
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
 
-        // Roads can't cross cliffs (level difference > 0 without a slope tile)
-        if (exitEdgeLevel !== entryEdgeLevel) {
-          // Check if it's a slope tile that the road can traverse
-          const neighborDef = TILE_LIST[neighbor.type]
-          const isSlope = neighborDef?.highEdges?.length > 0
-          if (!isSlope) continue
+        // Slope tiles: roads can ONLY go straight across the slope axis
+        const neighborDef = TILE_LIST[neighbor.type]
+        const neighborIsSlope = neighborDef?.highEdges?.length > 0
+        if (neighborIsSlope) {
+          if (!canTraverseSlope(neighbor, oppositeDir)) continue
+        }
 
-          // Roads can only go straight through slopes (E-W axis for the slope)
-          // Check if the road direction aligns with the slope direction
-          const slopeRoadType = neighborDef.name
-          if (slopeRoadType !== 'ROAD_A_SLOPE_LOW' && slopeRoadType !== 'ROAD_A_SLOPE_HIGH' &&
-              slopeRoadType !== 'GRASS_SLOPE_LOW' && slopeRoadType !== 'GRASS_SLOPE_HIGH') {
-            continue
-          }
+        // Current cell is a slope: road can only exit along slope axis
+        const currentDef = TILE_LIST[current.type]
+        const currentIsSlope = currentDef?.highEdges?.length > 0
+        if (currentIsSlope) {
+          if (!canTraverseSlope(current, d)) continue
+        }
+
+        // Cliff check: edge levels must match (slopes already handled above)
+        if (exitEdgeLevel !== entryEdgeLevel) {
+          if (!neighborIsSlope) continue
         }
 
         // --- Cost computation ---
@@ -693,20 +716,27 @@ export class RoadRouter {
         if (edgeVals.every(ev => ev === 'water')) continue
         if (edgeVals.some(ev => ev === 'coast')) continue
 
-        // Elevation check
+        // Elevation & slope checks
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
         const entryEdgeLvl = edgeLevelAt(neighbor, oppositeDir)
 
+        // Slope tiles: roads can ONLY go straight across the slope axis
+        const neighborDef = TILE_LIST[neighbor.type]
+        const neighborIsSlope = neighborDef?.highEdges?.length > 0
+        if (neighborIsSlope) {
+          if (!canTraverseSlope(neighbor, oppositeDir)) continue
+        }
+
+        const currentDef = TILE_LIST[current.type]
+        const currentIsSlope = currentDef?.highEdges?.length > 0
+        if (currentIsSlope) {
+          if (!canTraverseSlope(current, d)) continue
+        }
+
+        // Cliff check: edge levels must match
         if (exitEdgeLevel !== entryEdgeLvl) {
-          const neighborDef = TILE_LIST[neighbor.type]
-          const isSlope = neighborDef?.highEdges?.length > 0
-          if (!isSlope) continue
-          const slopeName = neighborDef.name
-          if (slopeName !== 'ROAD_A_SLOPE_LOW' && slopeName !== 'ROAD_A_SLOPE_HIGH' &&
-              slopeName !== 'GRASS_SLOPE_LOW' && slopeName !== 'GRASS_SLOPE_HIGH') {
-            continue
-          }
+          if (!neighborIsSlope) continue
         }
 
         // --- Adjacency-aware cost ---
