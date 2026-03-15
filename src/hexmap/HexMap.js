@@ -1230,6 +1230,7 @@ export class HexMap {
       await grid.populateFromCubeResults(gridTiles, gridCollapseOrder, center, {
         animate,
         animateDelay,
+        deferDecorations: true,  // placed after rivers/forests/villages pipeline
       })
 
       grid.setHelperVisible(this.helpersVisible)

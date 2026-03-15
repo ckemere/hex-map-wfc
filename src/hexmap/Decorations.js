@@ -226,23 +226,27 @@ export class Decorations {
       const noiseA = globalNoiseA.scaled2D(worldX, worldZ)
       const noiseB = globalNoiseB.scaled2D(worldX, worldZ)
 
-      const aAbove = noiseA >= threshold
-      const bAbove = noiseB >= threshold
-
-      // Skip if neither noise field is above threshold
-      if (!aAbove && !bAbove) continue
-
-      // Determine tree type: if both overlap, higher noise value wins
+      // When forest zones drive placement, noise only selects tree type/density.
+      // Without zones, noise threshold decides whether to place at all.
       let treeType, noiseVal
-      if (aAbove && bAbove) {
+      if (forestTileIds) {
+        // Zone already decided this cell gets trees — use noise for variety only
         treeType = noiseA >= noiseB ? 'A' : 'B'
-        noiseVal = treeType === 'A' ? noiseA : noiseB
-      } else if (aAbove) {
-        treeType = 'A'
-        noiseVal = noiseA
+        noiseVal = Math.max(noiseA, noiseB)
       } else {
-        treeType = 'B'
-        noiseVal = noiseB
+        const aAbove = noiseA >= threshold
+        const bAbove = noiseB >= threshold
+        if (!aAbove && !bAbove) continue
+        if (aAbove && bAbove) {
+          treeType = noiseA >= noiseB ? 'A' : 'B'
+          noiseVal = treeType === 'A' ? noiseA : noiseB
+        } else if (aAbove) {
+          treeType = 'A'
+          noiseVal = noiseA
+        } else {
+          treeType = 'B'
+          noiseVal = noiseB
+        }
       }
 
       // Check instance limit before adding
@@ -252,9 +256,11 @@ export class Decorations {
       }
 
       // Map noise value to density tier (0-3)
-      // threshold..1.0 maps to single -> small -> medium -> large
-      const normalizedNoise = (noiseVal - threshold) / (1 - threshold)  // 0..1
-      const tierIndex = Math.min(3, Math.floor(normalizedNoise * 4))
+      // When zone-driven, use raw noise [0,1] for density; otherwise threshold..1.0
+      const normalizedNoise = forestTileIds
+        ? noiseVal  // already [0,1]
+        : (noiseVal - threshold) / (1 - threshold)
+      const tierIndex = Math.min(3, Math.max(0, Math.floor(normalizedNoise * 4)))
       // At tier 0 (single tree), 30% chance to use a C/D/E variant instead
       let meshName
       if (tierIndex === 0 && random() < 0.3) {

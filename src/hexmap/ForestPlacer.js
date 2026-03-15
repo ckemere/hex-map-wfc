@@ -1,57 +1,55 @@
 /**
  * ForestPlacer — post-WFC forest zone identification (Step 4)
  *
- * After rivers are routed, identifies cells that should be forested.
- * Uses noise-weighted scoring with biases for mid-elevation and river
- * proximity. Produces a Set<cubeKey> consumed by the Decorations system.
+ * Samples the same global noise fields (globalNoiseA/B) used by the
+ * Decorations tree system to identify which cells should be forested.
+ * The noise defines the base structure; biases for elevation and river
+ * proximity adjust the threshold per-cell.
+ *
+ * Produces a Set<cubeKey> consumed by Decorations.populate().
  */
 
-import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance } from './HexWFCCore.js'
+import { cubeKey, cubeToOffset, CUBE_DIRS, cubeDistance, parseCubeKey } from './HexWFCCore.js'
 import { TILE_LIST, TileType } from './HexTileData.js'
-
-/** Hash-based noise in [0,1) — same pattern as RiverRouter. */
-function coordNoise(q, r, freq, seed = 0) {
-  const x = q * freq + seed
-  const z = r * freq
-  const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
-  return n - Math.floor(n)
-}
+import { HexTileGeometry } from './HexTiles.js'
+import { globalNoiseA, globalNoiseB, getCurrentTreeThreshold } from './DecorationDefs.js'
 
 export class ForestPlacer {
   /**
    * @param {Map} globalCells — HexMap.globalCells (cubeKey → cell)
    * @param {Map} riverCells  — RiverRouter.riverCells (cubeKey → info), may be empty
    * @param {Object} [options]
-   * @param {number} [options.noiseFreq=0.06]      — noise frequency for clustering
-   * @param {number} [options.threshold=0.35]      — noise threshold for forest eligibility
-   * @param {number} [options.riverBonus=0.15]     — score bonus for cells near rivers (within riverBonusRange)
-   * @param {number} [options.riverBonusRange=3]   — max hex distance for river proximity bonus
-   * @param {number} [options.idealLevel=1]        — preferred elevation for forests
-   * @param {number} [options.levelPenalty=0.1]    — penalty per level away from idealLevel
+   * @param {number} [options.riverBonus=0.1]       — threshold reduction for cells near rivers
+   * @param {number} [options.riverBonusRange=3]    — max hex distance for river proximity bonus
+   * @param {number} [options.idealLevel=1]         — preferred elevation for forests
+   * @param {number} [options.levelPenalty=0.05]    — threshold increase per level away from idealLevel
    */
   constructor(globalCells, riverCells, options = {}) {
     this.globalCells = globalCells
     this.riverCells = riverCells || new Map()
-    this.noiseFreq = options.noiseFreq ?? 0.06
-    this.threshold = options.threshold ?? 0.35
-    this.riverBonus = options.riverBonus ?? 0.15
+    this.riverBonus = options.riverBonus ?? 0.1
     this.riverBonusRange = options.riverBonusRange ?? 3
     this.idealLevel = options.idealLevel ?? 1
-    this.levelPenalty = options.levelPenalty ?? 0.1
+    this.levelPenalty = options.levelPenalty ?? 0.05
   }
 
   /**
-   * Identify forest zone cells.
+   * Identify forest zone cells by sampling the global tree noise.
    * @returns {Set<string>} cubeKeys of cells that should have forests
    */
   place() {
+    if (!globalNoiseA || !globalNoiseB) {
+      console.warn('[FORESTS] Global noise not initialized, skipping')
+      return new Set()
+    }
+
+    const baseThreshold = getCurrentTreeThreshold()
     const forestCells = new Set()
 
     // Pre-collect river cell positions for proximity checks
     const riverPositions = []
     for (const key of this.riverCells.keys()) {
-      const coords = parseCubeKey(key)
-      riverPositions.push(coords)
+      riverPositions.push(parseCubeKey(key))
     }
 
     for (const [key, cell] of this.globalCells) {
@@ -64,19 +62,23 @@ export class ForestPlacer {
       // Skip coast-adjacent cells
       if (this._hasCoastNeighbor(cell)) continue
 
-      // Base score from noise
-      const noise = coordNoise(cell.q, cell.r, this.noiseFreq)
-      let score = noise
+      // Convert cube coords → world position for noise sampling
+      const offset = cubeToOffset(cell.q, cell.r, cell.s)
+      const worldPos = HexTileGeometry.getWorldPosition(offset.col, offset.row)
 
-      // Second noise octave for more natural clustering
-      const noise2 = coordNoise(cell.q, cell.r, this.noiseFreq * 2.5, 42)
-      score = score * 0.7 + noise2 * 0.3
+      // Sample the same noise fields Decorations uses
+      const noiseA = globalNoiseA.scaled2D(worldPos.x, worldPos.z)
+      const noiseB = globalNoiseB.scaled2D(worldPos.x, worldPos.z)
+      const noiseMax = Math.max(noiseA, noiseB)
 
-      // Elevation preference: penalize distance from ideal level
+      // Per-cell threshold: start from the global tree threshold, then adjust
+      let threshold = baseThreshold
+
+      // Elevation bias: penalize distance from ideal level
       const levelDist = Math.abs(cell.level - this.idealLevel)
-      score -= levelDist * this.levelPenalty
+      threshold += levelDist * this.levelPenalty
 
-      // River proximity bonus
+      // River proximity bonus: lower threshold near rivers
       if (riverPositions.length > 0) {
         let minDist = Infinity
         for (const rp of riverPositions) {
@@ -84,12 +86,11 @@ export class ForestPlacer {
           if (d < minDist) minDist = d
         }
         if (minDist <= this.riverBonusRange) {
-          // Closer = bigger bonus, but not ON the river (minDist > 0 guaranteed by riverCells skip above)
-          score += this.riverBonus * (1 - minDist / (this.riverBonusRange + 1))
+          threshold -= this.riverBonus * (1 - minDist / (this.riverBonusRange + 1))
         }
       }
 
-      if (score >= this.threshold) {
+      if (noiseMax >= threshold) {
         forestCells.add(key)
       }
     }

@@ -406,7 +406,12 @@ export class HexGrid {
       this.placeTile(placement)
     }
     this.updateMatrices()
-    this.populateDecorations()
+    // When deferDecorations is set, skip decoration placement here — it will
+    // be done by HexMap._repopulateDecorationsWithZones() after the full
+    // pipeline (rivers → forests → villages) completes.
+    if (!options.deferDecorations) {
+      this.populateDecorations()
+    }
 
     // Apply debug level colors if active
     if (HexTile.debugLevelColors) {
