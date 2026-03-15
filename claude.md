@@ -32,8 +32,8 @@ The original WFC includes river tiles in the solve, which causes three problems:
 Pipeline phases (run in order after WFC terrain solve):
 1. **Terrain** — WFC only. No road tiles, no river tiles. ✅
 2. **Rivers** — rule-based second pass using elevation data from phase 1. ✅
-3. **Forests** — noise-weighted placement on grass cells, respecting rivers. ⬜
-4. **Villages** — proximity-scored placement, respecting rivers and forests. ⬜
+3. **Forests** — terrain-shaped noise density, thresholded placement. ✅
+4. **Villages** — terrain-shaped noise density, clustered placement. ✅
 5. **Lakes** — flood-fill from RIVER_END markers left by phase 2. ⬜
 6. **Roads** — pathfinding between settlements, crossing rivers at valid points. ⬜
 
@@ -118,22 +118,40 @@ directly — BFS pre-validates mouth compatibility via the `validMouths` map
 
 ---
 
-## Step 4 — Forest placement (next)
+## Step 4 & 5 — Forest and Village placement ✅ DONE
 
-Post-river pass to place tree/forest tiles on eligible grass cells. Should run
-after river tile replacement so forests can respect river positions. Design
-considerations:
-- Biases: near rivers, mid-elevation, away from coast
-- Noise-based density variation for natural clustering
-- Must not overwrite river tiles or coast tiles
+### Architecture: Terrain-shaped noise
+After WFC terrain and river routing, `TerrainNoise.buildTerrainDensity()`
+builds per-cell density maps that combine the base simplex noise with terrain
+features. The noise IS the terrain — elevation, river proximity, and coast
+distance are baked into the density values.
 
-## Step 5 — Village placement (after forests)
+`src/hexmap/TerrainNoise.js` — `buildTerrainDensity(globalCells, riverCells)`
+- **forestDensity**: `max(noiseA, noiseB) × elevationShape × coastFade × (1 + riverAttraction × 0.3)`
+- **villageDensity**: `noiseC × elevationShape × coastFade × (1 + riverAttraction × 0.6)`
+- Coast fade: suppresses density near coast/water (0→1 over coastRange)
+- River attraction: boosts density near rivers (stronger for villages)
+- Elevation shaping: forests prefer mid-level, villages prefer flat
 
-Place village tiles on remaining grass cells after forests are placed. Should
-respect both river and forest positions. Design considerations:
-- Biases: near rivers (trade routes), flat areas, accessible terrain
-- Minimum distance between villages to avoid clustering
-- Must not overwrite river, coast, or forest tiles
+`src/hexmap/ForestPlacer.js` — thresholds `forestDensity >= treeThreshold`
+`src/hexmap/VillagePlacer.js` — thresholds `villageDensity >= buildingThreshold`,
+then picks village centers with `minVillageDistance` spacing and expands each
+into a cluster of eligible neighbors.
+
+### Pipeline
+`routeRivers()` → `_placeZones()`:
+1. `buildTerrainDensity()` — noise × terrain → per-cell density maps
+2. `ForestPlacer.place()` — threshold → `forestCells` Set
+3. `VillagePlacer.place()` — threshold + cluster → `villageCells` Set
+4. `_repopulateDecorationsWithZones()` — passes zone maps through HexGrid
+   into Decorations for guided tree/building placement
+
+### Decoration integration
+During auto-build, `populateFromCubeResults` defers decorations
+(`deferDecorations: true`). After the full pipeline completes,
+`_repopulateDecorationsWithZones()` populates all grids with zone
+awareness. `Decorations.populate()` places trees only in forest zones;
+`populateBuildings()` places buildings only in village zones.
 
 ---
 
@@ -150,11 +168,16 @@ respect both river and forest positions. Design considerations:
 - `src/hexmap/HexMap.js` — `populateGrid` and `populateAllGrids` are the two
   solve entry points. `globalCells` is the post-solve Map of all placed tiles,
   keyed by cube coordinate string, each entry has `type`, `rotation`, `level`.
-  After WFC, calls `routeRivers()` (async) which runs RiverRouter, applies tile
-  replacements, and does local WFC re-solves for coast endpoints.
+  After WFC, calls `routeRivers()` → `_placeZones()` which runs
+  RiverRouter, builds terrain-shaped density, and places forest/village zones.
 - `src/hexmap/RiverRouter.js` — BFS-based river routing. Exports `RiverRouter`
   class and `RiverCellType` enum. `computeReplacements()` returns direct
   tile replacements for the entire river path including coast mouths.
+- `src/hexmap/TerrainNoise.js` — `buildTerrainDensity()` builds per-cell
+  density maps combining simplex noise with terrain features (elevation,
+  river proximity, coast distance).
+- `src/hexmap/ForestPlacer.js` — thresholds forest density → `Set<cubeKey>`.
+- `src/hexmap/VillagePlacer.js` — thresholds village density + clusters.
 - `src/hexmap/RiverDebugOverlay.js` — debug visualisation of routed rivers.
   Colored hex fills rendered as a Three.js mesh overlay.
 - `src/hexmap/HexWFCCore.js` — cube coordinate helpers (`cubeKey`, `CUBE_DIRS`,
