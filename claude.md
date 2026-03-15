@@ -126,17 +126,104 @@ builds per-cell density maps that combine the base simplex noise with terrain
 features. The noise IS the terrain — elevation, river proximity, and coast
 distance are baked into the density values.
 
-`src/hexmap/TerrainNoise.js` — `buildTerrainDensity(globalCells, riverCells)`
-- **forestDensity**: `max(noiseA, noiseB) × elevationShape × coastFade × (1 + riverAttraction × 0.3)`
-- **villageDensity**: `noiseC × elevationShape × coastFade × (1 + riverAttraction × 0.6)`
-- Coast fade: suppresses density near coast/water (0→1 over coastRange)
-- River attraction: boosts density near rivers (stronger for villages)
-- Elevation shaping: forests prefer mid-level, villages prefer flat
+### Noise foundation (`DecorationDefs.js`)
+Three independent `ScaledNoise` instances (SimplexNoise remapped from [-1,1]
+to [0,1]):
+- **globalNoiseA** (freq 0.05) — tree channel A
+- **globalNoiseB** (freq 0.05) — tree channel B
+- **globalNoiseC** (freq 0.02) — village/building channel
 
-`src/hexmap/ForestPlacer.js` — thresholds `forestDensity >= treeThreshold`
-`src/hexmap/VillagePlacer.js` — thresholds `villageDensity >= buildingThreshold`,
-then picks village centers with `minVillageDistance` spacing and expands each
-into a cluster of eligible neighbors.
+### Shared terrain factors (`TerrainNoise.js`)
+Computed per cell before density formulas:
+
+| Factor | Formula | Purpose |
+|--------|---------|---------|
+| `coastFade` | `distToCoast ≤ coastRange(2) ? distToCoast/coastRange : 1` | Suppress near coast (0→1) |
+| `riverAttraction` | `distToRiver ≤ riverRange(4) ? 1 - distToRiver/(riverRange+1) : 0` | Boost near rivers (1→0) |
+
+### Forest density formula
+```
+baseNoise      = max(noiseA, noiseB)
+elevationShape = max(0, 1 - |cell.level - forestIdealLevel(1)| × 0.25)
+forestDensity  = min(1, baseNoise × elevationShape × coastFade × (1 + riverAttraction × 0.3))
+```
+- Two noise channels → overlapping biomes of tree type A and B.
+- Elevation decays 25% per level away from ideal (level 1).
+- Rivers give a mild 30% boost.
+
+### Forest zone thresholding (`ForestPlacer.js`)
+All cells with `forestDensity ≥ treeThreshold (0.5)` are added to the
+`forestCells` set. Simple pass — no clustering or spacing logic.
+
+### Tree instance placement (`Decorations.populate()`)
+Within forest zones, each cell gets a tree mesh:
+1. **Type**: `noiseA ≥ noiseB → type A, else type B`.
+2. **Density tier**: `tier = floor(noiseVal × 4)` clamped to 0–3.
+   - Tier 0 → `tree_single_{A,B}` (30% chance of variant C/D/E instead)
+   - Tier 1 → `trees_{A,B}_small`
+   - Tier 2 → `trees_{A,B}_medium`
+   - Tier 3 → `trees_{A,B}_large`
+3. **Position jitter**: ±0.2 units XZ, scale 1.0–1.2, random Y rotation.
+4. **Instance limit**: `MAX_TREES = 100` per grid.
+
+### Village density formula
+```
+baseNoise      = noiseC
+elevationShape = cell.level ≤ villageMaxLevel(1) ? 1 : max(0, 1 - (cell.level - 1) × 0.4)
+villageDensity = min(1, baseNoise × elevationShape × coastFade × (1 + riverAttraction × 1.0))
+```
+- Single noise channel at lower frequency → larger village blobs.
+- Elevation drops 40% per level above 1 (stricter than forests).
+- Rivers give a strong 100% boost (up to 2× density).
+
+### Village zone creation (`VillagePlacer.js`)
+1. Collect cells where `villageDensity ≥ 0.35` **and** not in `forestCells`.
+2. Sort candidates by density descending.
+3. Greedily pick village centers, enforcing `minVillageDistance = 4` hex.
+4. Expand each center to all 6 hex neighbors (radius 1) that are in the
+   density map and not forest.
+
+### Building instance placement (`Decorations.populateBuildings()`)
+Within village zones, buildings are placed in priority order:
+
+1. **Road dead-ends** — building faces the road exit direction.
+2. **Village noise candidates** — cells in the `villageCells` zone.
+3. **Coast windmills** — 35% chance on coast-adjacent grass (level 0).
+   Three-part composite: base + top (y+0.685) + fan (y+0.957, z+0.332)
+   with 4-second rotation animation.
+4. **Shipyard** — 25% chance on COAST_A tiles, max 1 per grid.
+5. **Rare buildings** — 50% chance on high grass (level 2+), max 1 per grid.
+   Weighted: henge (2), mine (1), fort (1).
+
+Building mesh selection uses weighted random pick:
+```
+building_home_A_yellow  weight 15   (most common)
+building_home_B_yellow  weight 6
+building_well_yellow    weight 3
+building_church_yellow  weight 2    (unique — max 1)
+building_tower_A_yellow weight 2    (50% chance of tower top)
+building_market_yellow  weight 2    (unique — max 1)
+building_blacksmith     weight 1    (unique — max 1)
+building_townhall       weight 1
+```
+Position jitter ±0.3 units XZ, random Y rotation. `MAX_BUILDINGS = 40` per grid.
+
+### Key thresholds summary
+
+| Parameter | Value | File |
+|-----------|-------|------|
+| Tree noise freq | 0.05 | DecorationDefs.js |
+| Building noise freq | 0.02 | DecorationDefs.js |
+| Forest zone threshold | 0.5 | ForestPlacer.js |
+| Village zone threshold | 0.35 | VillagePlacer.js |
+| River influence range | 4 hex | TerrainNoise.js |
+| Coast suppression range | 2 hex | TerrainNoise.js |
+| Forest ideal level | 1 | TerrainNoise.js |
+| Village max level | 1 | TerrainNoise.js |
+| Min village distance | 4 hex | VillagePlacer.js |
+| Village cluster radius | 1 hex | VillagePlacer.js |
+| Max trees per grid | 100 | DecorationDefs.js |
+| Max buildings per grid | 40 | DecorationDefs.js |
 
 ### Pipeline
 `routeRivers()` → `_placeZones()`:
