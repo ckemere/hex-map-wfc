@@ -343,6 +343,10 @@ export class RiverRouter {
         const exitEdgeLevel = exitEdgeLevel_current
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
+
+        // Edge levels must match at the boundary (no cliff crossings)
+        if (exitEdgeLevel !== entryEdgeLevel) continue
+
         const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
 
         // Only allow downhill or flat (relative to exit edge).

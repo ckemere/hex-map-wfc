@@ -1375,9 +1375,32 @@ export class HexMap {
     this.applyTileResultsToGrids(replacements)
   }
 
-  /** Apply road tile replacements to globalCells and visual grids. */
+  /** Apply road tile replacements to globalCells and visual grids.
+   *  Stores originals so they can be reverted by _revertRoadReplacements(). */
   _applyRoadReplacements(replacements) {
+    if (!this._roadOriginalTiles) this._roadOriginalTiles = []
     for (const tile of replacements) {
+      const key = cubeKey(tile.q, tile.r, tile.s)
+      const existing = this.globalCells.get(key)
+      if (existing) {
+        // Save original before overwriting
+        this._roadOriginalTiles.push({
+          q: existing.q, r: existing.r, s: existing.s,
+          type: existing.type, rotation: existing.rotation, level: existing.level,
+        })
+        existing.type = tile.type
+        existing.rotation = tile.rotation
+        existing.level = tile.level
+      }
+    }
+    this.applyTileResultsToGrids(replacements)
+  }
+
+  /** Revert all road tile replacements to their original tiles. */
+  _revertRoadReplacements() {
+    if (!this._roadOriginalTiles || this._roadOriginalTiles.length === 0) return
+    const originals = this._roadOriginalTiles
+    for (const tile of originals) {
       const key = cubeKey(tile.q, tile.r, tile.s)
       const existing = this.globalCells.get(key)
       if (existing) {
@@ -1386,7 +1409,8 @@ export class HexMap {
         existing.level = tile.level
       }
     }
-    this.applyTileResultsToGrids(replacements)
+    this.applyTileResultsToGrids(originals)
+    this._roadOriginalTiles = []
   }
 
 
@@ -1405,6 +1429,9 @@ export class HexMap {
    * Called automatically after village placement.
    */
   _routeRoads() {
+    // Revert any previous road tile replacements before re-routing
+    this._revertRoadReplacements()
+
     const riverCells = this._riverCells || new Map()
     const villageCells = this.villageCells || new Set()
 
