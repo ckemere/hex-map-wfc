@@ -475,10 +475,8 @@ export class RoadRouter {
           if (!canTraverseSlope(current, d)) continue
         }
 
-        // Cliff check: edge levels must match (slopes already handled above)
-        if (exitEdgeLevel !== entryEdgeLevel) {
-          if (!neighborIsSlope) continue
-        }
+        // Cliff check: edge levels must match
+        if (exitEdgeLevel !== entryEdgeLevel) continue
 
         // --- Cost computation ---
         let stepCost = 1.0 // base cost: flat per cell
@@ -763,9 +761,7 @@ export class RoadRouter {
         }
 
         // Cliff check: edge levels must match
-        if (exitEdgeLevel !== entryEdgeLvl) {
-          if (!neighborIsSlope) continue
-        }
+        if (exitEdgeLevel !== entryEdgeLvl) continue
 
         // --- Adjacency-aware cost ---
         let stepCost
