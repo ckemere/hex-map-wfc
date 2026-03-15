@@ -296,7 +296,20 @@ export class RiverRouter {
         ? [0, 1, 2, 3, 4, 5]
         : [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
 
+      // Compute the elevation at which the river entered this cell.
+      // Exit edges must not be higher than this, or the river would go
+      // uphill through the tile (e.g. entering a cliff from the low side
+      // and exiting from the high side).
+      const currentEntryEdgeLevel = e === null
+        ? cellElevation(current)   // source: use base level
+        : edgeLevelAt(current, e)
+
       for (const d of validExits) {
+        // Prevent uphill traversal through slope/cliff tiles: the exit
+        // edge must not be higher than the entry edge of this cell.
+        const exitEdgeLevel_current = edgeLevelAt(current, d)
+        if (exitEdgeLevel_current > currentEntryEdgeLevel) continue
+
         const dir = CUBE_DIRS[d]
         const nq = current.q + dir.dq
         const nr = current.r + dir.dr
@@ -327,7 +340,7 @@ export class RiverRouter {
         const hasCoast = edgeVals.some(e => e === 'coast')
 
         // --- Elevation check (applied to ALL neighbors including coast/water) ---
-        const exitEdgeLevel = edgeLevelAt(current, d)
+        const exitEdgeLevel = exitEdgeLevel_current
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
         const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
