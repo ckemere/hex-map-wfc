@@ -1,23 +1,19 @@
 /**
  * VillagePlacer — post-WFC village zone identification (Step 5)
  *
- * After forests are placed, identifies cells that should have villages.
- * Uses noise + proximity scoring biased toward rivers and flat terrain.
- * Picks village centers with minimum spacing, then expands each center
- * into a small cluster of nearby eligible cells. Produces a Set<cubeKey>
- * consumed by the Decorations system.
+ * Samples the same global noise field (globalNoiseC) used by the
+ * Decorations building system to identify which cells should have
+ * villages. The noise defines the base structure; biases for river
+ * proximity and elevation adjust the threshold per-cell.
+ *
+ * Picks village centers with minimum spacing, then expands each into
+ * a small cluster. Produces a Set<cubeKey> consumed by Decorations.
  */
 
-import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance } from './HexWFCCore.js'
+import { cubeKey, cubeToOffset, parseCubeKey, CUBE_DIRS, cubeDistance } from './HexWFCCore.js'
 import { TILE_LIST, TileType } from './HexTileData.js'
-
-/** Hash-based noise in [0,1). */
-function coordNoise(q, r, freq, seed = 0) {
-  const x = q * freq + seed
-  const z = r * freq
-  const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
-  return n - Math.floor(n)
-}
+import { HexTileGeometry } from './HexTiles.js'
+import { globalNoiseC, getBuildingThreshold } from './DecorationDefs.js'
 
 export class VillagePlacer {
   /**
@@ -25,34 +21,37 @@ export class VillagePlacer {
    * @param {Map} riverCells   — RiverRouter.riverCells (cubeKey → info)
    * @param {Set} forestCells  — ForestPlacer output (cubeKeys)
    * @param {Object} [options]
-   * @param {number} [options.noiseFreq=0.04]         — noise frequency
-   * @param {number} [options.threshold=0.45]         — score threshold for center eligibility
-   * @param {number} [options.riverBonus=0.3]         — score bonus for river proximity
+   * @param {number} [options.riverBonus=0.15]        — threshold reduction for river proximity
    * @param {number} [options.riverBonusRange=4]      — max hex distance for river bonus
    * @param {number} [options.minVillageDistance=6]    — minimum hex distance between village centers
    * @param {number} [options.clusterRadius=1]        — hex radius around center to include in village
    * @param {number} [options.maxLevel=1]             — villages prefer flat areas ≤ this level
-   * @param {number} [options.highLevelPenalty=0.2]    — penalty per level above maxLevel
+   * @param {number} [options.highLevelPenalty=0.1]   — threshold increase per level above maxLevel
    */
   constructor(globalCells, riverCells, forestCells, options = {}) {
     this.globalCells = globalCells
     this.riverCells = riverCells || new Map()
     this.forestCells = forestCells || new Set()
-    this.noiseFreq = options.noiseFreq ?? 0.04
-    this.threshold = options.threshold ?? 0.45
-    this.riverBonus = options.riverBonus ?? 0.3
+    this.riverBonus = options.riverBonus ?? 0.15
     this.riverBonusRange = options.riverBonusRange ?? 4
     this.minVillageDistance = options.minVillageDistance ?? 6
     this.clusterRadius = options.clusterRadius ?? 1
     this.maxLevel = options.maxLevel ?? 1
-    this.highLevelPenalty = options.highLevelPenalty ?? 0.2
+    this.highLevelPenalty = options.highLevelPenalty ?? 0.1
   }
 
   /**
-   * Identify village zone cells.
+   * Identify village zone cells by sampling the global building noise.
    * @returns {Set<string>} cubeKeys of cells suitable for village buildings
    */
   place() {
+    if (!globalNoiseC) {
+      console.warn('[VILLAGES] Global noise not initialized, skipping')
+      return new Set()
+    }
+
+    const baseThreshold = getBuildingThreshold()
+
     // Pre-collect river positions
     const riverPositions = []
     for (const key of this.riverCells.keys()) {
@@ -65,14 +64,22 @@ export class VillagePlacer {
     for (const [key, cell] of this.globalCells) {
       if (!this._isEligible(key, cell)) continue
 
-      let score = coordNoise(cell.q, cell.r, this.noiseFreq, 99)
+      // Convert cube coords → world position for noise sampling
+      const offset = cubeToOffset(cell.q, cell.r, cell.s)
+      const worldPos = HexTileGeometry.getWorldPosition(offset.col, offset.row)
+
+      // Sample the same noise field Decorations uses for buildings
+      const noise = globalNoiseC.scaled2D(worldPos.x, worldPos.z)
+
+      // Per-cell threshold: start from global building threshold, then adjust
+      let threshold = baseThreshold
 
       // Elevation penalty for high terrain
       if (cell.level > this.maxLevel) {
-        score -= (cell.level - this.maxLevel) * this.highLevelPenalty
+        threshold += (cell.level - this.maxLevel) * this.highLevelPenalty
       }
 
-      // River proximity bonus (big bonus — villages like being near water)
+      // River proximity bonus: lower threshold near rivers
       if (riverPositions.length > 0) {
         let minDist = Infinity
         for (const rp of riverPositions) {
@@ -80,17 +87,17 @@ export class VillagePlacer {
           if (d < minDist) minDist = d
         }
         if (minDist <= this.riverBonusRange) {
-          score += this.riverBonus * (1 - minDist / (this.riverBonusRange + 1))
+          threshold -= this.riverBonus * (1 - minDist / (this.riverBonusRange + 1))
         }
       }
 
-      if (score >= this.threshold) {
-        candidates.push({ key, cell, score })
+      if (noise >= threshold) {
+        candidates.push({ key, cell, noise })
       }
     }
 
-    // Sort by score descending, then greedily pick centers enforcing min distance
-    candidates.sort((a, b) => b.score - a.score)
+    // Sort by noise value descending, then greedily pick centers enforcing min distance
+    candidates.sort((a, b) => b.noise - a.noise)
 
     const villageCells = new Set()
     const centers = [] // { q, r, s } of placed village centers
