@@ -445,6 +445,10 @@ export class RoadRouter {
         // Water/coast: impassable
         if (isWater || hasCoast) continue
 
+        // River sources (springs): impassable
+        const riverInfo = this.riverCells.get(nk)
+        if (riverInfo && riverInfo.type === 'source') continue
+
         // Elevation & slope checks
         const exitEdgeLevel = edgeLevelAt(current, d)
         const oppositeDir = (d + 3) % 6
