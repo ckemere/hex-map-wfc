@@ -344,14 +344,14 @@ export class RiverRouter {
         const oppositeDir = (d + 3) % 6
         const entryEdgeLevel = edgeLevelAt(neighbor, oppositeDir)
 
-        // Edge levels must match at the boundary (no cliff crossings)
-        if (exitEdgeLevel !== entryEdgeLevel) continue
+        // Rivers can flow downhill across cliffs (exit > entry) or flat
+        // (exit == entry), but NEVER uphill (entry > exit).
+        if (entryEdgeLevel > exitEdgeLevel) continue
 
         const effectiveElev = Math.max(cellElevation(neighbor), entryEdgeLevel)
 
-        // Only allow downhill or flat (relative to exit edge).
-        // This prevents rivers from flowing uphill to reach high-elevation
-        // coast tiles (e.g. crater lakes).
+        // Also block if the neighbor's overall elevation is higher than
+        // our exit edge (prevents flowing uphill into high plateaus).
         if (effectiveElev > exitEdgeLevel) continue
 
         // --- Coast/water: goal if this is a pre-computed valid mouth ---
