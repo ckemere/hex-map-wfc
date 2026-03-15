@@ -120,6 +120,34 @@ const GoalType = {
 const GOAL_PRIORITY = { [GoalType.COAST]: 0, [GoalType.CONFLUENCE]: 1, [GoalType.EDGE]: 2 }
 
 // ---------------------------------------------------------------------------
+// 3-edge river tile templates (used for tile selection and confluence validation)
+// ---------------------------------------------------------------------------
+
+const RIVER_TILES_3 = [
+  { type: TileType.RIVER_D, dirs: [0, 2, 4] },  // NE, SE, W — evenly spaced (120° each)
+  { type: TileType.RIVER_E, dirs: [0, 1, 4] },  // NE, E, W — two adjacent + one opposite
+  { type: TileType.RIVER_F, dirs: [1, 2, 4] },  // E, SE, W — two adjacent + one opposite
+]
+
+/**
+ * Try to find a rotation r such that rotating the template's direction set
+ * produces exactly the required direction set.
+ *
+ * @param {number[]} required — sorted array of 3 direction indices
+ * @param {number[]} template — sorted array of 3 direction indices (unrotated)
+ * @returns {number|null} rotation (0–5) or null if no match
+ */
+function matchTile3(required, template) {
+  for (let r = 0; r < 6; r++) {
+    const rotated = template.map(d => (d + r) % 6).sort((a, b) => a - b)
+    if (rotated[0] === required[0] && rotated[1] === required[1] && rotated[2] === required[2]) {
+      return r
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // RiverRouter
 // ---------------------------------------------------------------------------
 
@@ -177,8 +205,12 @@ export class RiverRouter {
     // Separate from riverCells so that per-river BFS trees don't interfere.
     const globalOwned = new Map()
 
+    // globalDirs: track river edge directions per cell so we can validate
+    // that confluences won't produce 3 consecutive edges (no valid tile).
+    const globalDirs = new Map() // cubeKey → Set<dirIndex>
+
     for (let i = 0; i < sources.length; i++) {
-      this._routeRiver(sources[i], i, globalOwned)
+      this._routeRiver(sources[i], i, globalOwned, globalDirs)
     }
 
     // Post-pass: tag river cells on slope tiles for debug overlay
@@ -272,8 +304,9 @@ export class RiverRouter {
    * @param {string} sourceKey
    * @param {number} riverIndex
    * @param {Map} globalOwned — cells committed by previously routed rivers
+   * @param {Map} globalDirs — river edge directions per cell (for confluence validation)
    */
-  _routeRiver(sourceKey, riverIndex, globalOwned) {
+  _routeRiver(sourceKey, riverIndex, globalOwned, globalDirs) {
     const source = this.globalCells.get(sourceKey)
     if (!source) return
 
@@ -352,7 +385,12 @@ export class RiverRouter {
 
         // --- Owned by a previous river: confluence goal ---
         if (globalOwned.has(nk)) {
-          goals.push({ goalKey: nk, goalType: GoalType.CONFLUENCE, traceTo: currentKey, cost: currentCost })
+          // Check that adding our direction won't create an invalid 3-edge
+          // pattern (3 consecutive directions have no valid tile)
+          const newDir = (d + 3) % 6 // direction we'd enter the confluence cell from
+          if (this._isValidConfluence(nk, newDir, globalDirs)) {
+            goals.push({ goalKey: nk, goalType: GoalType.CONFLUENCE, traceTo: currentKey, cost: currentCost })
+          }
           continue
         }
 
@@ -394,6 +432,14 @@ export class RiverRouter {
         // confluence tile (3-way junction) lands on the existing river.
         if (this._isAdjacentToOwnedRiver(nq, nr, ns, globalOwned)) {
           const ownedKey = this._findAdjacentOwnedRiver(nq, nr, ns, globalOwned)
+          // Compute direction from nk into the owned cell
+          const ownedCoord = parseCubeKey(ownedKey)
+          const dirToOwned = this._directionBetween(
+            { q: nq, r: nr, s: ns }, ownedCoord
+          )
+          if (dirToOwned < 0) continue
+          const entryIntoOwned = (dirToOwned + 3) % 6
+          if (!this._isValidConfluence(ownedKey, entryIntoOwned, globalDirs)) continue
           // Add nk to BFS tree so it can be traced through
           cameFrom.set(nk, currentKey)
           entryDir.set(nk, (d + 3) % 6)
@@ -494,11 +540,69 @@ export class RiverRouter {
     }
 
     this.rivers.push({ source: sourceKey, path, endType })
+
+    // Update globalDirs with directions for all cells in this path
+    for (let i = 0; i < path.length; i++) {
+      const key = path[i]
+      const cell = this.globalCells.get(key)
+      if (!cell) continue
+      if (!globalDirs.has(key)) globalDirs.set(key, new Set())
+      const dirs = globalDirs.get(key)
+      if (i > 0) {
+        const prevCell = this.globalCells.get(path[i - 1])
+        if (prevCell) {
+          const d = this._directionBetween(cell, prevCell)
+          if (d >= 0) dirs.add(d)
+        }
+      }
+      if (i < path.length - 1) {
+        const nextCell = this.globalCells.get(path[i + 1])
+        if (nextCell) {
+          const d = this._directionBetween(cell, nextCell)
+          if (d >= 0) dirs.add(d)
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
+
+  /**
+   * Check whether adding a new river direction to an existing cell would
+   * produce a valid 3-edge pattern. Three consecutive directions (e.g.
+   * NE, E, SE) have no valid tile, so those confluences must be rejected.
+   *
+   * @param {string} cellKey — the confluence cell
+   * @param {number} newDir — the new direction being added
+   * @param {Map<string, Set<number>>} globalDirs — existing directions per cell
+   * @returns {boolean}
+   */
+  _isValidConfluence(cellKey, newDir, globalDirs) {
+    const existing = globalDirs.get(cellKey)
+    if (!existing || existing.size < 2) return true // ≤2 existing + 1 new = ≤3, check pattern
+
+    // Build the combined direction set
+    const combined = new Set(existing)
+    combined.add(newDir)
+
+    // If still ≤2 directions (newDir was already present), always valid
+    if (combined.size <= 2) return true
+
+    // For 3+ directions, check that a valid tile exists
+    if (combined.size === 3) {
+      const sorted = [...combined].sort((a, b) => a - b)
+      // Check against the 3-edge tile templates
+      for (const template of RIVER_TILES_3) {
+        if (matchTile3(sorted, template.dirs) !== null) return true
+      }
+      return false // no valid tile for this 3-edge pattern
+    }
+
+    // 4+ edges: no valid tile exists
+    return false
+  }
 
   /**
    * Check whether any of a cell's 6 neighbors belongs to a previously
@@ -779,13 +883,6 @@ const RIVER_TILES_2 = [
   { type: TileType.RIVER_B,       dirs: [0, 4], sep: 2 },  // NE, W — gentle curve (120°)
 ]
 
-const RIVER_TILES_3 = [
-  // 3-edge tiles
-  { type: TileType.RIVER_D, dirs: [0, 2, 4] },  // NE, SE, W — evenly spaced (120° each)
-  { type: TileType.RIVER_E, dirs: [0, 1, 4] },  // NE, E, W — two adjacent + one opposite
-  { type: TileType.RIVER_F, dirs: [1, 2, 4] },  // E, SE, W — two adjacent + one opposite
-]
-
 /**
  * Given a set of required river direction indices, find the best tile type
  * and rotation.
@@ -875,23 +972,5 @@ function selectRiverTile(requiredDirs) {
     return { type: TileType.RIVER_D, rotation }
   }
 
-  return null
-}
-
-/**
- * Try to find a rotation r such that rotating the template's direction set
- * produces exactly the required direction set.
- *
- * @param {number[]} required — sorted array of 3 direction indices
- * @param {number[]} template — sorted array of 3 direction indices (unrotated)
- * @returns {number|null} rotation (0–5) or null if no match
- */
-function matchTile3(required, template) {
-  for (let r = 0; r < 6; r++) {
-    const rotated = template.map(d => (d + r) % 6).sort((a, b) => a - b)
-    if (rotated[0] === required[0] && rotated[1] === required[1] && rotated[2] === required[2]) {
-      return r
-    }
-  }
   return null
 }
