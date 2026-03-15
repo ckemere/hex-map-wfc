@@ -1375,6 +1375,20 @@ export class HexMap {
     this.applyTileResultsToGrids(replacements)
   }
 
+  /** Apply road tile replacements to globalCells and visual grids. */
+  _applyRoadReplacements(replacements) {
+    for (const tile of replacements) {
+      const key = cubeKey(tile.q, tile.r, tile.s)
+      const existing = this.globalCells.get(key)
+      if (existing) {
+        existing.type = tile.type
+        existing.rotation = tile.rotation
+        existing.level = tile.level
+      }
+    }
+    this.applyTileResultsToGrids(replacements)
+  }
+
 
   /** Toggle the river debug overlay visibility (driven by Debug View dropdown) */
   setRiverDebugVisible(visible) {
@@ -1408,6 +1422,13 @@ export class HexMap {
 
     const router = new RoadRouter(this.globalCells, riverCells, villageCells, { maxTerminals })
     const { roadCells } = router.route()
+
+    // Compute and apply tile replacements
+    const { replacements } = router.computeReplacements()
+    if (replacements.length > 0) {
+      this._applyRoadReplacements(replacements)
+      log(`[ROADS] Applied ${replacements.length} tile replacements`, 'color: #cc8833')
+    }
 
     if (!this.roadOverlay) {
       this.roadOverlay = new RoadDebugOverlay(this.scene)
