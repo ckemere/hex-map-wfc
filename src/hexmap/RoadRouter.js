@@ -503,13 +503,15 @@ export class RoadRouter {
   }
 
   /**
-   * Check whether a road traveling in direction d can cross the river at
-   * the given cell. Only straight rivers (RIVER_A, RIVER_A_CURVY) can be
-   * crossed, and only at the angles supported by crossing tiles:
-   *   CROSSING_A: road at SE(2),NW(5) relative to river axis
-   *   CROSSING_B: road at NE(0),SW(3) relative to river axis
+   * Check whether a road can cross the river at the given cell.
    *
-   * Sources, confluences, ends, and curved rivers cannot be crossed.
+   * Rule: only straight rivers (RIVER_A / RIVER_A_CURVY) can be crossed.
+   * Both road and river go straight through (opposite edges). The road axis
+   * must simply be different from the river axis — any non-river axis works,
+   * giving two valid crossing angles (CROSSING_A and CROSSING_B).
+   *
+   * River axis is E(1)–W(4) rotated by the tile's rotation, so the road
+   * entry direction must not land on either river edge.
    */
   _canCrossRiver(neighborKey, roadExitDir) {
     const cell = this.globalCells.get(neighborKey)
@@ -522,17 +524,16 @@ export class RoadRouter {
     const name = def.name
     if (name !== 'RIVER_A' && name !== 'RIVER_A_CURVY') return false
 
-    // River axis is E(1)-W(4) rotated by cell.rotation
+    // River occupies edges E(1) and W(4), rotated by cell.rotation
     const rot = cell.rotation
+    const riverEdge0 = (1 + rot) % 6
+    const riverEdge1 = (4 + rot) % 6
+
+    // Road entry is the opposite of the exit direction
     const roadEntryDir = (roadExitDir + 3) % 6
 
-    // CROSSING_A: road at SE(2),NW(5) rotated
-    if (roadEntryDir === (2 + rot) % 6 || roadEntryDir === (5 + rot) % 6) return true
-
-    // CROSSING_B: road at NE(0),SW(3) rotated
-    if (roadEntryDir === (0 + rot) % 6 || roadEntryDir === (3 + rot) % 6) return true
-
-    return false
+    // Road can cross as long as it doesn't enter on a river edge
+    return roadEntryDir !== riverEdge0 && roadEntryDir !== riverEdge1
   }
 
   /** Trace a path from goal back to source via cameFrom map. */
@@ -726,14 +727,9 @@ export class RoadRouter {
         if (edgeVals.every(ev => ev === 'water')) continue
         if (edgeVals.some(ev => ev === 'coast')) continue
 
-        // River cells: impassable unless a compatible crossing tile
+        // River cells: only crossable at straight rivers in a compatible direction
         if (this.riverCells.has(nk)) {
-          const neighborName = def.name
-          if (neighborName === 'RIVER_CROSSING_A' || neighborName === 'RIVER_CROSSING_B') {
-            if (!this._isCrossingCompatible(neighbor, d)) continue
-          } else {
-            continue
-          }
+          if (!this._canCrossRiver(nk, d)) continue
         }
 
         // Elevation & slope checks
