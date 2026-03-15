@@ -1,112 +1,64 @@
 /**
  * VillagePlacer — post-WFC village zone identification (Step 5)
  *
- * Samples the same global noise field (globalNoiseC) used by the
- * Decorations building system to identify which cells should have
- * villages. The noise defines the base structure; biases for river
- * proximity and elevation adjust the threshold per-cell.
+ * Thresholds the terrain-shaped village density field produced by
+ * TerrainNoise.buildTerrainDensity(). All terrain awareness is baked
+ * into the density values.
  *
  * Picks village centers with minimum spacing, then expands each into
- * a small cluster. Produces a Set<cubeKey> consumed by Decorations.
+ * a cluster of neighboring eligible cells. Produces a Set<cubeKey>
+ * consumed by Decorations.populateBuildings().
  */
 
-import { cubeKey, cubeToOffset, parseCubeKey, CUBE_DIRS, cubeDistance } from './HexWFCCore.js'
-import { TILE_LIST, TileType } from './HexTileData.js'
-import { HexTileGeometry } from './HexTiles.js'
-import { globalNoiseC, getBuildingThreshold } from './DecorationDefs.js'
+import { cubeKey, CUBE_DIRS, cubeDistance, parseCubeKey } from './HexWFCCore.js'
+import { getBuildingThreshold } from './DecorationDefs.js'
 
 export class VillagePlacer {
   /**
-   * @param {Map} globalCells  — HexMap.globalCells (cubeKey → cell)
-   * @param {Map} riverCells   — RiverRouter.riverCells (cubeKey → info)
-   * @param {Set} forestCells  — ForestPlacer output (cubeKeys)
+   * @param {Map<string,number>} villageDensity — per-cell density from TerrainNoise
+   * @param {Set<string>} forestCells — ForestPlacer output (cubeKeys to exclude)
    * @param {Object} [options]
-   * @param {number} [options.riverBonus=0.15]        — threshold reduction for river proximity
-   * @param {number} [options.riverBonusRange=4]      — max hex distance for river bonus
-   * @param {number} [options.minVillageDistance=6]    — minimum hex distance between village centers
-   * @param {number} [options.clusterRadius=1]        — hex radius around center to include in village
-   * @param {number} [options.maxLevel=1]             — villages prefer flat areas ≤ this level
-   * @param {number} [options.highLevelPenalty=0.1]   — threshold increase per level above maxLevel
+   * @param {number} [options.threshold]             — density threshold; defaults to building threshold
+   * @param {number} [options.minVillageDistance=6]   — minimum hex distance between village centers
+   * @param {number} [options.clusterRadius=1]       — include neighbors within this radius
    */
-  constructor(globalCells, riverCells, forestCells, options = {}) {
-    this.globalCells = globalCells
-    this.riverCells = riverCells || new Map()
+  constructor(villageDensity, forestCells, options = {}) {
+    this.villageDensity = villageDensity
     this.forestCells = forestCells || new Set()
-    this.riverBonus = options.riverBonus ?? 0.15
-    this.riverBonusRange = options.riverBonusRange ?? 4
+    this.threshold = options.threshold ?? null  // null = use global building threshold
     this.minVillageDistance = options.minVillageDistance ?? 6
     this.clusterRadius = options.clusterRadius ?? 1
-    this.maxLevel = options.maxLevel ?? 1
-    this.highLevelPenalty = options.highLevelPenalty ?? 0.1
   }
 
   /**
-   * Identify village zone cells by sampling the global building noise.
+   * Identify village zone cells.
    * @returns {Set<string>} cubeKeys of cells suitable for village buildings
    */
   place() {
-    if (!globalNoiseC) {
-      console.warn('[VILLAGES] Global noise not initialized, skipping')
-      return new Set()
-    }
+    const threshold = this.threshold ?? getBuildingThreshold()
 
-    const baseThreshold = getBuildingThreshold()
-
-    // Pre-collect river positions
-    const riverPositions = []
-    for (const key of this.riverCells.keys()) {
-      riverPositions.push(parseCubeKey(key))
-    }
-
-    // Score all candidate cells for village centers
+    // Collect candidates above threshold, excluding forest cells
     const candidates = []
-
-    for (const [key, cell] of this.globalCells) {
-      if (!this._isEligible(key, cell)) continue
-
-      // Convert cube coords → world position for noise sampling
-      const offset = cubeToOffset(cell.q, cell.r, cell.s)
-      const worldPos = HexTileGeometry.getWorldPosition(offset.col, offset.row)
-
-      // Sample the same noise field Decorations uses for buildings
-      const noise = globalNoiseC.scaled2D(worldPos.x, worldPos.z)
-
-      // Per-cell threshold: start from global building threshold, then adjust
-      let threshold = baseThreshold
-
-      // Elevation penalty for high terrain
-      if (cell.level > this.maxLevel) {
-        threshold += (cell.level - this.maxLevel) * this.highLevelPenalty
-      }
-
-      // River proximity bonus: lower threshold near rivers
-      if (riverPositions.length > 0) {
-        let minDist = Infinity
-        for (const rp of riverPositions) {
-          const d = cubeDistance(cell.q, cell.r, cell.s, rp.q, rp.r, rp.s)
-          if (d < minDist) minDist = d
-        }
-        if (minDist <= this.riverBonusRange) {
-          threshold -= this.riverBonus * (1 - minDist / (this.riverBonusRange + 1))
-        }
-      }
-
-      if (noise >= threshold) {
-        candidates.push({ key, cell, noise })
+    for (const [key, density] of this.villageDensity) {
+      if (this.forestCells.has(key)) continue
+      if (density >= threshold) {
+        candidates.push({ key, density })
       }
     }
 
-    // Sort by noise value descending, then greedily pick centers enforcing min distance
-    candidates.sort((a, b) => b.noise - a.noise)
+    // Sort by density descending — best sites get picked first
+    candidates.sort((a, b) => b.density - a.density)
 
     const villageCells = new Set()
-    const centers = [] // { q, r, s } of placed village centers
+    const centers = [] // { q, r, s }
 
-    for (const { key, cell } of candidates) {
+    for (const { key } of candidates) {
+      const coords = parseCubeKey(key)
+
       // Enforce minimum distance from other village centers
       let tooClose = false
       for (const p of centers) {
-        if (cubeDistance(cell.q, cell.r, cell.s, p.q, p.r, p.s) < this.minVillageDistance) {
+        if (cubeDistance(coords.q, coords.r, coords.s, p.q, p.r, p.s) < this.minVillageDistance) {
           tooClose = true
           break
         }
@@ -115,42 +67,17 @@ export class VillagePlacer {
 
       // Add center
       villageCells.add(key)
-      centers.push({ q: cell.q, r: cell.r, s: cell.s })
+      centers.push(coords)
 
-      // Expand cluster: add eligible neighbors within clusterRadius
+      // Expand cluster: add eligible neighbors
       for (const dir of CUBE_DIRS) {
-        const nq = cell.q + dir.dq
-        const nr = cell.r + dir.dr
-        const ns = cell.s + dir.ds
-        const nk = cubeKey(nq, nr, ns)
-        const neighbor = this.globalCells.get(nk)
-        if (neighbor && this._isEligible(nk, neighbor)) {
+        const nk = cubeKey(coords.q + dir.dq, coords.r + dir.dr, coords.s + dir.ds)
+        if (this.villageDensity.has(nk) && !this.forestCells.has(nk)) {
           villageCells.add(nk)
         }
       }
     }
 
     return villageCells
-  }
-
-  /** Check if a cell is eligible for village placement. */
-  _isEligible(key, cell) {
-    if (cell.type !== TileType.GRASS) return false
-    if (this.riverCells.has(key)) return false
-    if (this.forestCells.has(key)) return false
-    if (this._hasCoastNeighbor(cell)) return false
-    return true
-  }
-
-  /** Check if any neighbor is coast or water. */
-  _hasCoastNeighbor(cell) {
-    for (const dir of CUBE_DIRS) {
-      const nk = cubeKey(cell.q + dir.dq, cell.r + dir.dr, cell.s + dir.ds)
-      const neighbor = this.globalCells.get(nk)
-      if (!neighbor) continue
-      const def = TILE_LIST[neighbor.type]
-      if (def && (def.name.startsWith('COAST_') || def.name === 'WATER')) return true
-    }
-    return false
   }
 }
