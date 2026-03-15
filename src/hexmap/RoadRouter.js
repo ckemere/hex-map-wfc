@@ -417,9 +417,15 @@ export class RoadRouter {
       // Same angular constraints as rivers — no 60° sharp turns.
       // Source/terminal cells (no entry direction) can exit any direction.
       const e = entryDir.get(currentKey)
-      const validExits = e === null
-        ? [0, 1, 2, 3, 4, 5]
-        : [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+      // If current cell is a river crossing, road must go straight through
+      let validExits
+      if (e !== null && this.riverCells.has(currentKey)) {
+        validExits = [(e + 3) % 6] // straight through only
+      } else if (e === null) {
+        validExits = [0, 1, 2, 3, 4, 5]
+      } else {
+        validExits = [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+      }
 
       for (const d of validExits) {
         const dir = CUBE_DIRS[d]
@@ -706,9 +712,15 @@ export class RoadRouter {
       // (the road is already established, so we can branch from it freely)
       const isOnRoad = globalOwned.has(currentKey)
       const isTerminal = terminalSet.has(currentKey)
-      const validExits = (e === null || isOnRoad || isTerminal)
-        ? [0, 1, 2, 3, 4, 5]
-        : [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+      // If current cell is a river crossing, road must go straight through
+      let validExits
+      if (e !== null && this.riverCells.has(currentKey)) {
+        validExits = [(e + 3) % 6] // straight through only
+      } else if (e === null || isOnRoad || isTerminal) {
+        validExits = [0, 1, 2, 3, 4, 5]
+      } else {
+        validExits = [(e + 2) % 6, (e + 3) % 6, (e + 4) % 6]
+      }
 
       for (const d of validExits) {
         const dir = CUBE_DIRS[d]
