@@ -252,60 +252,101 @@ export class RoadRouter {
   // ---------------------------------------------------------------------------
 
   _selectTerminals() {
+    // --- Identify village clusters via flood-fill ---
+    // Two village cells are in the same cluster if they're within distance 2
+    // of each other (allows small gaps between buildings).
+    const villageClusters = [] // array of Set<cubeKey>
+    const assigned = new Set()
+
+    for (const vk of this.villageCells) {
+      if (assigned.has(vk)) continue
+      const cluster = new Set()
+      const stack = [vk]
+      while (stack.length > 0) {
+        const ck = stack.pop()
+        if (assigned.has(ck)) continue
+        assigned.add(ck)
+        cluster.add(ck)
+        // Find unassigned village cells within distance 2
+        const cc = parseCubeKey(ck)
+        for (const vk2 of this.villageCells) {
+          if (assigned.has(vk2)) continue
+          const vc2 = parseCubeKey(vk2)
+          if (cubeDistance(cc.q, cc.r, cc.s, vc2.q, vc2.r, vc2.s) <= 2) {
+            stack.push(vk2)
+          }
+        }
+      }
+      villageClusters.push(cluster)
+    }
+
+    console.warn(`[ROADS] Village clusters: ${villageClusters.length}`)
+
+    // --- Build candidate list ---
     // Build a density map: for each cell, count how many village cells are
     // within radius 2. This gives a smooth "village proximity" field.
     const villageDensity = new Map()
     for (const vk of this.villageCells) {
       const vc = parseCubeKey(vk)
-      // Radius 2 splash: the village cell itself + ring-1 + ring-2
       for (let dq = -2; dq <= 2; dq++) {
         for (let dr = Math.max(-2, -dq - 2); dr <= Math.min(2, -dq + 2); dr++) {
           const ds = -dq - dr
           const nk = cubeKey(vc.q + dq, vc.r + dr, vc.s + ds)
           const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds))
-          // Weight falls off with distance: 3 for self, 2 for ring-1, 1 for ring-2
           const w = 3 - dist
           villageDensity.set(nk, (villageDensity.get(nk) || 0) + w)
         }
       }
     }
 
+    // Map each candidate to which cluster it's closest to (within radius 2)
+    const candidateCluster = new Map() // key → cluster index
+    for (let ci = 0; ci < villageClusters.length; ci++) {
+      const cluster = villageClusters[ci]
+      for (const vk of cluster) {
+        const vc = parseCubeKey(vk)
+        for (let dq = -2; dq <= 2; dq++) {
+          for (let dr = Math.max(-2, -dq - 2); dr <= Math.min(2, -dq + 2); dr++) {
+            const ds = -dq - dr
+            const nk = cubeKey(vc.q + dq, vc.r + dr, vc.s + ds)
+            if (!candidateCluster.has(nk)) candidateCluster.set(nk, ci)
+          }
+        }
+      }
+    }
+
     // Score candidates: prefer cells in/near villages, on walkable terrain.
-    // Any cell adjacent to a village is a candidate (low threshold).
     const candidates = []
     for (const [key, cell] of this.globalCells) {
       const def = TILE_LIST[cell.type]
       if (!def) continue
       const edgeVals = Object.values(def.edges)
-      // Skip water, coast, river tiles (roads don't start there)
       if (edgeVals.every(e => e === 'water')) continue
       if (edgeVals.some(e => e === 'coast')) continue
       if (edgeVals.some(e => e === 'river')) continue
-      // Skip existing road tiles
       if (edgeVals.some(e => e === 'road')) continue
 
       const vDensity = villageDensity.get(key) || 0
-      if (vDensity <= 0) continue // must be near a village
+      if (vDensity <= 0) continue
 
       const noise = coordNoise(cell.q, cell.r, 0.12)
-
-      // Weight: village density dominates, noise adds variety
       const weight = vDensity + noise * 0.3
 
-      candidates.push({ key, cell, weight })
+      candidates.push({ key, cell, weight, cluster: candidateCluster.get(key) ?? -1 })
     }
 
     candidates.sort((a, b) => b.weight - a.weight)
 
+    // --- Select one terminal per cluster ---
     const terminals = []
     const termCoords = []
+    const clusterHasTerminal = new Set() // cluster indices that already have a terminal
 
-    // First pass: place a terminal in every village cluster that doesn't
-    // already have one. Track which village cells are "covered".
-    const coveredVillages = new Set()
-
-    for (const { key, cell } of candidates) {
+    for (const { key, cell, cluster } of candidates) {
       if (terminals.length >= this.maxTerminals) break
+
+      // Only one terminal per village cluster
+      if (cluster >= 0 && clusterHasTerminal.has(cluster)) continue
 
       // Check minimum distance from existing terminals
       let tooClose = false
@@ -319,28 +360,18 @@ export class RoadRouter {
 
       terminals.push(key)
       termCoords.push({ q: cell.q, r: cell.r, s: cell.s })
-
-      // Mark nearby village cells as covered
-      for (const vk of this.villageCells) {
-        const vc = parseCubeKey(vk)
-        if (cubeDistance(cell.q, cell.r, cell.s, vc.q, vc.r, vc.s) <= this.minTerminalDistance) {
-          coveredVillages.add(vk)
-        }
-      }
+      if (cluster >= 0) clusterHasTerminal.add(cluster)
     }
 
-    // Second pass: any uncovered village cluster gets a terminal even if
-    // it's closer than minTerminalDistance to an existing one (but still
-    // enforce distance 2 to avoid overlapping terminals).
-    if (coveredVillages.size < this.villageCells.size) {
-      for (const { key, cell } of candidates) {
+    // Second pass: any cluster without a terminal gets one (relax distance to 2)
+    for (let ci = 0; ci < villageClusters.length; ci++) {
+      if (clusterHasTerminal.has(ci)) continue
+      if (terminals.length >= this.maxTerminals) break
+
+      for (const { key, cell, cluster } of candidates) {
+        if (cluster !== ci) continue
         if (terminals.length >= this.maxTerminals) break
-        if (coveredVillages.has(key)) continue
 
-        // Must be a village cell itself (not just nearby)
-        if (!this.villageCells.has(key)) continue
-
-        // Enforce minimum distance of 2 from other terminals
         let tooClose = false
         for (const tc of termCoords) {
           if (cubeDistance(cell.q, cell.r, cell.s, tc.q, tc.r, tc.s) < 2) {
@@ -352,17 +383,12 @@ export class RoadRouter {
 
         terminals.push(key)
         termCoords.push({ q: cell.q, r: cell.r, s: cell.s })
-
-        for (const vk of this.villageCells) {
-          const vc = parseCubeKey(vk)
-          if (cubeDistance(cell.q, cell.r, cell.s, vc.q, vc.r, vc.s) <= this.minTerminalDistance) {
-            coveredVillages.add(vk)
-          }
-        }
+        clusterHasTerminal.add(ci)
+        break
       }
     }
 
-    console.warn(`[ROADS] Village coverage: ${coveredVillages.size}/${this.villageCells.size} village cells covered`)
+    console.warn(`[ROADS] Clusters with terminals: ${clusterHasTerminal.size}/${villageClusters.length}`)
     return terminals
   }
 
