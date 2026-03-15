@@ -512,6 +512,12 @@ export class RoadRouter {
           stepCost = this.crossingReward
         }
 
+        // Terminal proximity penalty: discourage routing next to other
+        // terminals so junctions don't form right at village road-ends
+        if (!terminalSet.has(nk) && this._isAdjacentToTerminal(nq, nr, ns, terminalSet, new Set([sourceKey]))) {
+          stepCost += 6.0
+        }
+
         // Edge-of-map penalty
         const edgeCount = this._countEdgeNeighbors(nq, nr, ns)
         if (edgeCount > 0) {
@@ -807,6 +813,11 @@ export class RoadRouter {
             stepCost += this.adjacencyPenalty
           }
 
+          // Terminal proximity penalty: push junctions away from road-ends
+          if (!terminalSet.has(nk) && this._isAdjacentToTerminal(nq, nr, ns, terminalSet, new Set([fromKey, toKey]))) {
+            stepCost += 6.0
+          }
+
           // Edge penalty
           const edgeCount = this._countEdgeNeighbors(nq, nr, ns)
           if (edgeCount > 0) stepCost += this.edgePenalty * edgeCount
@@ -833,6 +844,18 @@ export class RoadRouter {
       const dir = CUBE_DIRS[d]
       const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
       if (globalOwned.has(nk)) return true
+    }
+    return false
+  }
+
+  /**
+   * Check if any neighbor of (q,r,s) is a terminal other than the excluded ones.
+   */
+  _isAdjacentToTerminal(q, r, s, terminalSet, excludeKeys) {
+    for (let d = 0; d < 6; d++) {
+      const dir = CUBE_DIRS[d]
+      const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
+      if (terminalSet.has(nk) && !excludeKeys.has(nk)) return true
     }
     return false
   }
