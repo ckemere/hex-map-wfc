@@ -1370,7 +1370,9 @@ export class HexMap {
    * Trees on the grassy portions of road tiles are preserved.
    */
   _removeTreesOnRoadBeds() {
+    console.log('[ROAD-TREE] _removeTreesOnRoadBeds called, grids:', this.grids.size)
     for (const grid of this.grids.values()) {
+      console.log(`[ROAD-TREE] grid state=${grid.state}, POPULATED=${HexGridState.POPULATED}`)
       if (grid.state === HexGridState.POPULATED) {
         grid.removeTreesOnRoadBed()
       }
