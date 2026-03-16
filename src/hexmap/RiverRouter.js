@@ -221,20 +221,41 @@ export class RiverRouter {
   }
 
   /**
-   * Tag river PATH cells that sit on slope tiles so the debug overlay
-   * can highlight them. Only re-tags PATH cells (not source/confluence/etc).
+   * Tag river cells where the river drops in elevation.
+   *
+   * Walks each river path in order (source → goal) and compares the
+   * effective elevation of consecutive cells.  A cell is tagged SLOPE
+   * when its level is strictly higher than the next cell's level.
+   *
+   * For flat tiles the effective elevation is simply `cell.level`.
+   * For slope tiles we use `cell.level + 0.5 * levelIncrement` so that
+   * a slope tile sorts between its low and high neighbours.
    */
   _tagSlopeCells() {
-    for (const [key, info] of this.riverCells) {
-      if (info.type !== RiverCellType.PATH) continue
-      const cell = this.globalCells.get(key)
-      if (!cell) continue
+    const effectiveLevel = (cell) => {
       const def = TILE_LIST[cell.type]
-      if (!def?.highEdges?.length) continue
-      if (def.levelIncrement === 1) {
-        info.type = RiverCellType.SLOPE
-      } else {
-        info.type = RiverCellType.SLOPE_MISSING
+      if (def?.highEdges?.length) {
+        return cell.level + 0.5 * (def.levelIncrement ?? 1)
+      }
+      return cell.level
+    }
+
+    for (const river of this.rivers) {
+      const { path } = river
+      for (let i = 0; i < path.length - 1; i++) {
+        const key = path[i]
+        const info = this.riverCells.get(key)
+        if (!info) continue
+        // Only re-tag PATH cells (don't overwrite source/confluence/etc.)
+        if (info.type !== RiverCellType.PATH) continue
+
+        const cell = this.globalCells.get(key)
+        const nextCell = this.globalCells.get(path[i + 1])
+        if (!cell || !nextCell) continue
+
+        if (effectiveLevel(cell) > effectiveLevel(nextCell)) {
+          info.type = RiverCellType.SLOPE
+        }
       }
     }
   }
