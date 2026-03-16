@@ -7,7 +7,7 @@ import {
   LEVEL_HEIGHT, TILE_SURFACE,
   globalNoiseA, globalNoiseB, globalNoiseC,
   getCurrentTreeThreshold, getBuildingThreshold,
-  weightedPick, isCoastOrWater, isFlatRoadTile, isOnRoadBed, hasRoadEdge, getRoadDeadEndInfo,
+  weightedPick, isCoastOrWater, hasRoadEdge, getRoadDeadEndInfo,
   TreesByType, TreeMeshNames,
   BuildingDefs, CoastBuildingDefs, BuildingMeshNames, CoastBuildingMeshNames,
   TOWER_TOP_MESH, TOWER_TOP_CHANCE,
@@ -1170,31 +1170,17 @@ export class Decorations {
   }
 
   /**
-   * Remove trees whose positions fall on the road bed of tiles that have
-   * become road tiles (called after road routing replaces grass → road).
-   * Trees on the grassy portions of road tiles are kept.
+   * Remove all trees on tiles that have become road tiles
+   * (called after road routing replaces grass → road).
    */
-  removeTreesOnRoadBed() {
+  removeTreesOnRoadTiles() {
     if (!this.mesh) return
-    const apothem = (HexTileGeometry.HEX_WIDTH || 2) / 2
-    let roadTreeCount = 0
-    let removedCount = 0
     this.trees = this.trees.filter(tree => {
-      const tileType = tree.tile.type
-      const tileDef = TILE_LIST[tileType]
-      if (!hasRoadEdge(tileType)) return true  // not a road tile, keep
-      roadTreeCount++
-      const onBed = isOnRoadBed(tileType, tree.tile.rotation, tree.ox, tree.oz, apothem)
-      console.log(`[ROAD-TREE] tile=${tileDef?.name} rot=${tree.tile.rotation} ox=${tree.ox.toFixed(3)} oz=${tree.oz.toFixed(3)} onBed=${onBed} apothem=${apothem}`)
-      if (onBed) {
-        this._invalidDecIds.add(tree.instanceId)
-        this.mesh.deleteInstance(tree.instanceId)
-        removedCount++
-        return false  // on road bed, remove
-      }
-      return true  // on grassy part of road tile, keep
+      if (!hasRoadEdge(tree.tile.type)) return true
+      this._invalidDecIds.add(tree.instanceId)
+      this.mesh.deleteInstance(tree.instanceId)
+      return false
     })
-    console.log(`[ROAD-TREE] Total trees: ${this.trees.length + removedCount}, on road tiles: ${roadTreeCount}, removed: ${removedCount}`)
   }
 
   /**
