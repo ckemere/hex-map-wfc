@@ -1350,8 +1350,8 @@ export class HexMap {
     // Route roads after decorations — trees already placed on grass tiles
     this._routeRoads()
 
-    // Remove trees whose positions now fall on road beds
-    this._removeTreesOnRoadBeds()
+    // Remove trees on tiles that are now roads
+    this._removeTreesOnRoadTiles()
   }
 
   /**
@@ -1366,15 +1366,12 @@ export class HexMap {
   }
 
   /**
-   * After road tiles replace grass tiles, remove trees on the road bed.
-   * Trees on the grassy portions of road tiles are preserved.
+   * Remove all trees on tiles that became road tiles after routing.
    */
-  _removeTreesOnRoadBeds() {
-    console.log('[ROAD-TREE] _removeTreesOnRoadBeds called, grids:', this.grids.size)
+  _removeTreesOnRoadTiles() {
     for (const grid of this.grids.values()) {
-      console.log(`[ROAD-TREE] grid state=${grid.state}, POPULATED=${HexGridState.POPULATED}`)
       if (grid.state === HexGridState.POPULATED) {
-        grid.removeTreesOnRoadBed()
+        grid.removeTreesOnRoadTiles()
       }
     }
   }
@@ -1452,10 +1449,10 @@ export class HexMap {
     this._revertRoadReplacements()
     // Re-place trees on restored grass tiles
     this._repopulateDecorationsWithZones()
-    // Route new roads (skips internal revert since we already did it)
+    // Route new roads (internal revert is no-op since we already did it)
     this._routeRoads()
-    // Cull trees that now sit on road beds
-    this._removeTreesOnRoadBeds()
+    // Remove trees on tiles that are now roads
+    this._removeTreesOnRoadTiles()
   }
 
   /**
