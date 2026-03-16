@@ -20,6 +20,7 @@
 import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
 import { TILE_LIST, TileType, HexDir, HexOpposite, rotateHexEdges } from './HexTileData.js'
 import { random } from '../SeededRandom.js'
+import { MinHeap, buildTileLookup } from './RouteUtils.js'
 
 /**
  * Cell classification for debug visualisation
@@ -59,54 +60,6 @@ function coordNoise(q, r, freq) {
 }
 
 // ---------------------------------------------------------------------------
-// Min-heap priority queue (binary heap, smallest cost first)
-// ---------------------------------------------------------------------------
-
-class MinHeap {
-  constructor() { this._data = [] }
-
-  get size() { return this._data.length }
-
-  push(item) {
-    this._data.push(item)
-    this._bubbleUp(this._data.length - 1)
-  }
-
-  pop() {
-    const top = this._data[0]
-    const last = this._data.pop()
-    if (this._data.length > 0) {
-      this._data[0] = last
-      this._sinkDown(0)
-    }
-    return top
-  }
-
-  _bubbleUp(i) {
-    while (i > 0) {
-      const parent = (i - 1) >> 1
-      if (this._data[i].cost < this._data[parent].cost) {
-        [this._data[i], this._data[parent]] = [this._data[parent], this._data[i]]
-        i = parent
-      } else break
-    }
-  }
-
-  _sinkDown(i) {
-    const n = this._data.length
-    while (true) {
-      let smallest = i
-      const l = 2 * i + 1, r = 2 * i + 2
-      if (l < n && this._data[l].cost < this._data[smallest].cost) smallest = l
-      if (r < n && this._data[r].cost < this._data[smallest].cost) smallest = r
-      if (smallest === i) break
-      ;[this._data[i], this._data[smallest]] = [this._data[smallest], this._data[i]]
-      i = smallest
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Goal types returned by the BFS expansion
 // ---------------------------------------------------------------------------
 
@@ -123,37 +76,14 @@ const GOAL_PRIORITY = { [GoalType.COAST]: 0, [GoalType.CONFLUENCE]: 1, [GoalType
 // Direction-set → tile lookup table (6-bit bitmask, 64 entries)
 // ---------------------------------------------------------------------------
 
-/** Convert a Set or iterable of direction indices (0–5) to a 6-bit mask. */
-function dirSetToMask(dirs) {
-  let mask = 0
-  for (const d of dirs) mask |= (1 << d)
-  return mask
-}
-
-/** All river tile templates: unrotated direction indices for each tile type. */
-const ALL_RIVER_TILES = [
+const RIVER_TILE_LOOKUP = buildTileLookup([
   { type: TileType.RIVER_END,    dirs: [4] },        // 1-edge: W
   { type: TileType.RIVER_A,      dirs: [1, 4] },     // 2-edge straight: E, W
   { type: TileType.RIVER_B,      dirs: [0, 4] },     // 2-edge curve: NE, W
   { type: TileType.RIVER_D,      dirs: [0, 2, 4] },  // 3-edge: NE, SE, W
   { type: TileType.RIVER_E,      dirs: [0, 1, 4] },  // 3-edge: NE, E, W
   { type: TileType.RIVER_F,      dirs: [1, 2, 4] },  // 3-edge: E, SE, W
-]
-
-/**
- * Pre-computed lookup: bitmask → { type, rotation }.
- * For every tile template at every rotation, compute the resulting bitmask
- * and store the first match. Covers all 64 possible direction combinations.
- */
-const RIVER_TILE_LOOKUP = new Array(64).fill(null)
-for (const { type, dirs } of ALL_RIVER_TILES) {
-  for (let r = 0; r < 6; r++) {
-    const mask = dirs.reduce((m, d) => m | (1 << ((d + r) % 6)), 0)
-    if (!RIVER_TILE_LOOKUP[mask]) {
-      RIVER_TILE_LOOKUP[mask] = { type, rotation: r }
-    }
-  }
-}
+])
 
 // ---------------------------------------------------------------------------
 // RiverRouter
@@ -665,10 +595,10 @@ export class RiverRouter {
    * @returns {{ replacements: Array<{ q, r, s, type, rotation, level }> }}
    */
   computeReplacements() {
-    // 1. Collect all river direction indices per cell across all rivers.
+    // 1. Collect all river direction bitmasks per cell across all rivers.
     //    A cell may appear in multiple paths (confluence), so we accumulate
-    //    a Set of direction indices where a river edge is needed.
-    const cellDirs = new Map()  // cubeKey → Set<dirIndex>
+    //    direction bits where a river edge is needed.
+    const cellDirs = new Map()  // cubeKey → 6-bit direction bitmask
     const cellEndType = new Map() // cubeKey → endType (for terminal cells)
 
     for (const river of this.rivers) {
@@ -679,15 +609,14 @@ export class RiverRouter {
         const cell = this.globalCells.get(key)
         if (!cell) continue  // off-map (edge end goal)
 
-        if (!cellDirs.has(key)) cellDirs.set(key, new Set())
-        const dirs = cellDirs.get(key)
+        let mask = cellDirs.get(key) ?? 0
 
         // Direction toward previous cell in path (entry)
         if (i > 0) {
           const prevCell = this.globalCells.get(path[i - 1])
           if (prevCell) {
             const d = this._directionBetween(cell, prevCell)
-            if (d >= 0) dirs.add(d)
+            if (d >= 0) mask |= (1 << d)
           }
         }
 
@@ -696,9 +625,11 @@ export class RiverRouter {
           const nextCell = this.globalCells.get(path[i + 1])
           if (nextCell) {
             const d = this._directionBetween(cell, nextCell)
-            if (d >= 0) dirs.add(d)
+            if (d >= 0) mask |= (1 << d)
           }
         }
+
+        cellDirs.set(key, mask)
 
         // Track end type for terminal cells
         if (i === path.length - 1) {
@@ -711,7 +642,7 @@ export class RiverRouter {
     const replacements = []
     let replaced = 0, skipped = 0
 
-    for (const [key, dirs] of cellDirs) {
+    for (const [key, mask] of cellDirs) {
       const cell = this.globalCells.get(key)
       if (!cell) continue
 
@@ -721,12 +652,16 @@ export class RiverRouter {
       // BFS already validated the 5 non-river edges via the pre-computed
       // validMouths map, so we just compute the rotation and place it.
       if (endType === RiverCellType.COAST_END) {
-        if (dirs.size !== 1) {
-          console.warn(`[RIVERS] Coast cell at (${cell.q},${cell.r},${cell.s}) has ${dirs.size} river dirs, expected 1`)
+        // Must have exactly 1 direction bit set
+        if (mask === 0 || (mask & (mask - 1)) !== 0) {
+          let bitCount = 0; for (let m = mask; m; m >>= 1) bitCount += m & 1
+          console.warn(`[RIVERS] Coast cell at (${cell.q},${cell.r},${cell.s}) has ${bitCount} river dirs, expected 1`)
           skipped++
           continue
         }
-        const riverDir = dirs.values().next().value
+        // Extract the single set bit index
+        let riverDir = 0
+        for (let m = mask; m > 1; m >>= 1) riverDir++
         const rotation = (riverDir - 5 + 6) % 6
         replacements.push({
           q: cell.q, r: cell.r, s: cell.s,
@@ -738,7 +673,7 @@ export class RiverRouter {
         continue
       }
 
-      const match = selectRiverTile(dirs)
+      const match = selectRiverTile(mask)
       if (!match) {
         skipped++
         continue
@@ -881,14 +816,13 @@ export class RiverRouter {
 // ---------------------------------------------------------------------------
 
 /**
- * Given a set of required river direction indices, find the best tile type
- * and rotation via the pre-computed lookup table.
+ * Given a 6-bit direction bitmask, find the best river tile type and rotation
+ * via the pre-computed lookup table.
  *
- * @param {Set<number>} requiredDirs — direction indices (0–5) needing river edges
+ * @param {number} mask — 6-bit direction bitmask
  * @returns {{ type: number, rotation: number } | null}
  */
-function selectRiverTile(requiredDirs) {
-  const mask = dirSetToMask(requiredDirs)
+function selectRiverTile(mask) {
   if (mask === 0) return null
 
   const match = RIVER_TILE_LOOKUP[mask]

@@ -16,6 +16,7 @@
 import { cubeKey, parseCubeKey, CUBE_DIRS, cubeDistance, getEdgeLevel } from './HexWFCCore.js'
 import { TILE_LIST, TileType, HexDir, HexOpposite, rotateHexEdges } from './HexTileData.js'
 import { random } from '../SeededRandom.js'
+import { MinHeap, buildTileLookup } from './RouteUtils.js'
 
 /**
  * Cell classification for debug visualisation
@@ -25,54 +26,6 @@ export const RoadCellType = {
   PATH: 'path',
   JUNCTION: 'junction',
   ROAD_END: 'road_end',
-}
-
-// ---------------------------------------------------------------------------
-// Min-heap priority queue (binary heap, smallest cost first)
-// ---------------------------------------------------------------------------
-
-class MinHeap {
-  constructor() { this._data = [] }
-
-  get size() { return this._data.length }
-
-  push(item) {
-    this._data.push(item)
-    this._bubbleUp(this._data.length - 1)
-  }
-
-  pop() {
-    const top = this._data[0]
-    const last = this._data.pop()
-    if (this._data.length > 0) {
-      this._data[0] = last
-      this._sinkDown(0)
-    }
-    return top
-  }
-
-  _bubbleUp(i) {
-    while (i > 0) {
-      const parent = (i - 1) >> 1
-      if (this._data[i].cost < this._data[parent].cost) {
-        [this._data[i], this._data[parent]] = [this._data[parent], this._data[i]]
-        i = parent
-      } else break
-    }
-  }
-
-  _sinkDown(i) {
-    const n = this._data.length
-    while (true) {
-      let smallest = i
-      const l = 2 * i + 1, r = 2 * i + 2
-      if (l < n && this._data[l].cost < this._data[smallest].cost) smallest = l
-      if (r < n && this._data[r].cost < this._data[smallest].cost) smallest = r
-      if (smallest === i) break
-      ;[this._data[i], this._data[smallest]] = [this._data[smallest], this._data[i]]
-      i = smallest
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +148,7 @@ export class RoadRouter {
     /** @type {Map<string, { type: string }>} cubeKey → road cell info */
     this.roadCells = new Map()
 
-    /** @type {Map<string, Set<number>>} cubeKey → Set<dirIndex> of road edge directions */
+    /** @type {Map<string, number>} cubeKey → 6-bit direction bitmask of road edges */
     this.roadEdges = new Map()
   }
 
@@ -878,24 +831,24 @@ export class RoadRouter {
         const cell = this.globalCells.get(key)
         if (!cell) continue
 
-        // Compute road directions for this cell in this path
-        if (!this.roadEdges.has(key)) this.roadEdges.set(key, new Set())
-        const dirs = this.roadEdges.get(key)
+        // Compute road direction bitmask for this cell in this path
+        let mask = this.roadEdges.get(key) ?? 0
 
         if (i > 0) {
           const prevCell = this.globalCells.get(path[i - 1])
           if (prevCell) {
             const d = this._directionBetween(cell, prevCell)
-            if (d >= 0) dirs.add(d)
+            if (d >= 0) mask |= (1 << d)
           }
         }
         if (i < path.length - 1) {
           const nextCell = this.globalCells.get(path[i + 1])
           if (nextCell) {
             const d = this._directionBetween(cell, nextCell)
-            if (d >= 0) dirs.add(d)
+            if (d >= 0) mask |= (1 << d)
           }
         }
+        this.roadEdges.set(key, mask)
 
         // Preliminary type (will be refined in second pass)
         if (!this.roadCells.has(key)) {
@@ -913,19 +866,23 @@ export class RoadRouter {
     // A cell with 2 directions that was visited by multiple paths is just
     // a shared road segment, not a junction.
     for (const [key, info] of this.roadCells) {
-      const dirs = this.roadEdges.get(key)
-      if (!dirs) continue
+      const mask = this.roadEdges.get(key)
+      if (mask === undefined) continue
 
-      if (dirs.size >= 3) {
+      // Count set bits in the 6-bit mask
+      let bitCount = 0
+      for (let m = mask; m; m >>= 1) bitCount += m & 1
+
+      if (bitCount >= 3) {
         this.roadCells.set(key, { type: RoadCellType.JUNCTION })
       } else if (terminalSet.has(key)) {
-        if (dirs.size === 1) {
+        if (bitCount === 1) {
           this.roadCells.set(key, { type: RoadCellType.ROAD_END })
         } else {
           this.roadCells.set(key, { type: RoadCellType.TERMINAL })
         }
       }
-      // dirs.size <= 2 non-terminal → stays PATH
+      // bitCount <= 2 non-terminal → stays PATH
     }
   }
 
@@ -943,14 +900,14 @@ export class RoadRouter {
     const replacements = []
     let replaced = 0, skipped = 0
 
-    for (const [key, dirs] of this.roadEdges) {
+    for (const [key, mask] of this.roadEdges) {
       const cell = this.globalCells.get(key)
       if (!cell) continue
 
       // Check if this is a river crossing
       const isRiverCell = this.riverCells.has(key)
       if (isRiverCell) {
-        const match = this._selectCrossingTile(cell, dirs)
+        const match = this._selectCrossingTile(cell, mask)
         if (match) {
           replacements.push({
             q: cell.q, r: cell.r, s: cell.s,
@@ -966,7 +923,7 @@ export class RoadRouter {
       // Check if this is a slope cell
       const def = TILE_LIST[cell.type]
       if (def?.highEdges?.length > 0) {
-        const match = this._selectSlopeTile(cell, dirs)
+        const match = this._selectSlopeTile(cell, mask)
         if (match) {
           replacements.push({
             q: cell.q, r: cell.r, s: cell.s,
@@ -979,7 +936,7 @@ export class RoadRouter {
         continue
       }
 
-      const match = selectRoadTile(dirs)
+      const match = selectRoadTile(mask)
       if (!match) {
         skipped++
         continue
@@ -1007,26 +964,24 @@ export class RoadRouter {
    * The river axis is E(1)-W(4) rotated by the existing tile's rotation.
    * The road must cross at ±60° from the river axis.
    */
-  _selectCrossingTile(cell, roadDirs) {
-    if (roadDirs.size !== 2) return null
-
-    const [a, b] = [...roadDirs].sort((x, y) => x - y)
-    const sep = Math.min(b - a, 6 - (b - a))
-    if (sep !== 3) return null // roads must be opposite (straight through)
+  _selectCrossingTile(cell, roadMask) {
+    // Exactly 2 opposite road directions required
+    const match = ROAD_TILE_LOOKUP[roadMask]
+    if (!match || match.type !== TileType.ROAD_A) return null // must be straight
 
     // Use the existing river tile's rotation as the base.
     // The river runs along E(1)-W(4) rotated by cell.rotation.
     const rot = cell.rotation
 
     // RIVER_CROSSING_A: road at SE(2),NW(5) rotated
-    const crossA_rd0 = (2 + rot) % 6, crossA_rd1 = (5 + rot) % 6
-    if ((crossA_rd0 === a && crossA_rd1 === b) || (crossA_rd0 === b && crossA_rd1 === a)) {
+    const crossA_mask = (1 << ((2 + rot) % 6)) | (1 << ((5 + rot) % 6))
+    if (roadMask === crossA_mask) {
       return { type: TileType.RIVER_CROSSING_A, rotation: rot }
     }
 
     // RIVER_CROSSING_B: road at NE(0),SW(3) rotated
-    const crossB_rd0 = (0 + rot) % 6, crossB_rd1 = (3 + rot) % 6
-    if ((crossB_rd0 === a && crossB_rd1 === b) || (crossB_rd0 === b && crossB_rd1 === a)) {
+    const crossB_mask = (1 << ((0 + rot) % 6)) | (1 << ((3 + rot) % 6))
+    if (roadMask === crossB_mask) {
       return { type: TileType.RIVER_CROSSING_B, rotation: rot }
     }
 
@@ -1037,12 +992,10 @@ export class RoadRouter {
    * Select a road slope tile for slope cells.
    * ROAD_A_SLOPE_LOW/HIGH: road at E(1), W(4) unrotated, high edges NE,E,SE
    */
-  _selectSlopeTile(cell, roadDirs) {
-    if (roadDirs.size !== 2) return null
-
-    const [a, b] = [...roadDirs].sort((x, y) => x - y)
-    const sep = Math.min(b - a, 6 - (b - a))
-    if (sep !== 3) return null // must be straight
+  _selectSlopeTile(cell, roadMask) {
+    // Must be a straight road (2 opposite directions)
+    const match = ROAD_TILE_LOOKUP[roadMask]
+    if (!match || match.type !== TileType.ROAD_A) return null
 
     // The road slope tile must preserve the original slope's rotation so
     // the high edges stay on the correct side. The road axis (E-W unrotated)
@@ -1082,97 +1035,33 @@ export class RoadRouter {
 }
 
 // ---------------------------------------------------------------------------
-// Road tile selection — pure function mapping direction sets to tile+rotation
+// Road tile selection — lookup-based mapping from direction sets to tile+rotation
 // ---------------------------------------------------------------------------
 
-/**
- * Road tile templates (direction indices where road edges exist unrotated).
- * Direction indices: 0=NE, 1=E, 2=SE, 3=SW, 4=W, 5=NW
- */
-const ROAD_TILES_3 = [
-  { type: TileType.ROAD_D, dirs: [0, 2, 4] },  // NE, SE, W — evenly spaced
-  { type: TileType.ROAD_E, dirs: [0, 1, 4] },  // NE, E, W — two adjacent + one opposite
-  { type: TileType.ROAD_F, dirs: [1, 2, 4] },  // E, SE, W — two adjacent + one opposite
-]
+const ROAD_TILE_LOOKUP = buildTileLookup([
+  { type: TileType.ROAD_END,  dirs: [4] },        // 1-edge: W
+  { type: TileType.ROAD_A,    dirs: [1, 4] },     // 2-edge straight: E, W
+  { type: TileType.ROAD_B,    dirs: [0, 4] },     // 2-edge curve: NE, W
+  { type: TileType.ROAD_D,    dirs: [0, 2, 4] },  // 3-edge: NE, SE, W
+  { type: TileType.ROAD_E,    dirs: [0, 1, 4] },  // 3-edge: NE, E, W
+  { type: TileType.ROAD_F,    dirs: [1, 2, 4] },  // 3-edge: E, SE, W
+])
 
 /**
- * Given a set of required road direction indices, find the best tile type
- * and rotation.
+ * Given a 6-bit direction bitmask, find the best road tile type and rotation
+ * via the pre-computed lookup table.
  *
- * @param {Set<number>} requiredDirs — direction indices (0–5) needing road edges
+ * @param {number} mask — 6-bit direction bitmask
  * @returns {{ type: number, rotation: number } | null}
  */
-function selectRoadTile(requiredDirs) {
-  const n = requiredDirs.size
+function selectRoadTile(mask) {
+  if (mask === 0) return null
 
-  if (n === 0) return null
-
-  // 1 edge — ROAD_END (unrotated road edge at index 4 = W)
-  if (n === 1) {
-    const dir = requiredDirs.values().next().value
-    const rotation = (dir - 4 + 6) % 6
-    return { type: TileType.ROAD_END, rotation }
-  }
-
-  // 2 edges
-  if (n === 2) {
-    const [a, b] = [...requiredDirs].sort((x, y) => x - y)
-    const sep = Math.min(b - a, 6 - (b - a))
-
-    if (sep === 3) {
-      // Straight (180°) — ROAD_A: road edges at E(1), W(4) unrotated
-      const rotation = (a - 1 + 6) % 6
-      return { type: TileType.ROAD_A, rotation }
-    }
-
-    if (sep === 2) {
-      // 120° bend — ROAD_B: road edges at NE(0), W(4) unrotated
-      for (const flip of [false, true]) {
-        const d0 = flip ? b : a
-        const d1 = flip ? a : b
-        const r = (d0 - 0 + 6) % 6
-        if ((4 + r) % 6 === d1) return { type: TileType.ROAD_B, rotation: r }
-      }
-      return null
-    }
-
-    // sep === 1 (60° — no valid tile)
+  const match = ROAD_TILE_LOOKUP[mask]
+  if (!match) {
+    console.warn(`[ROADS] No valid tile for direction mask 0b${mask.toString(2).padStart(6, '0')}`)
     return null
   }
 
-  // 3 edges — T-junctions
-  if (n === 3) {
-    const sorted = [...requiredDirs].sort((x, y) => x - y)
-
-    for (const template of ROAD_TILES_3) {
-      const match = matchTile3(sorted, template.dirs)
-      if (match !== null) return { type: template.type, rotation: match }
-    }
-
-    // Routing should guarantee a valid 3-edge intersection
-    console.warn(`[ROADS] No exact 3-edge tile match for directions [${sorted}] — routing bug`)
-    return null
-  }
-
-  // 4+ edges — no tiles exist
-  if (n >= 4) {
-    console.warn(`[ROADS] ${n}-edge junction has no tile — routing bug`)
-    return null
-  }
-
-  return null
-}
-
-/**
- * Try to find a rotation r such that rotating the template's direction set
- * produces exactly the required direction set.
- */
-function matchTile3(required, template) {
-  for (let r = 0; r < 6; r++) {
-    const rotated = template.map(d => (d + r) % 6).sort((a, b) => a - b)
-    if (rotated[0] === required[0] && rotated[1] === required[1] && rotated[2] === required[2]) {
-      return r
-    }
-  }
-  return null
+  return { type: match.type, rotation: match.rotation }
 }
