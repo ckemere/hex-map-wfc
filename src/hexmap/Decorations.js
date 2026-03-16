@@ -1170,17 +1170,21 @@ export class Decorations {
   }
 
   /**
-   * Remove all trees on tiles that have become road tiles
+   * Remove all decorations on tiles that have become road tiles
    * (called after road routing replaces grass → road).
    */
-  removeTreesOnRoadTiles() {
+  removeDecorationsOnRoadTiles() {
     if (!this.mesh) return
-    this.trees = this.trees.filter(tree => {
-      if (!hasRoadEdge(tree.tile.type)) return true
-      this._invalidDecIds.add(tree.instanceId)
-      this.mesh.deleteInstance(tree.instanceId)
+    const filterRoad = (items) => items.filter(item => {
+      if (!hasRoadEdge(item.tile.type)) return true
+      this._invalidDecIds.add(item.instanceId)
+      this.mesh.deleteInstance(item.instanceId)
       return false
     })
+    this.trees = filterRoad(this.trees)
+    this.flowers = filterRoad(this.flowers)
+    this.buildings = filterRoad(this.buildings)
+    this.rocks = filterRoad(this.rocks)
   }
 
   /**
