@@ -1344,11 +1344,14 @@ export class HexMap {
     this.villageCells = villagePlacer.place()
     log(`[VILLAGES] Placed ${this.villageCells.size} village cells`, 'color: #DAA520')
 
-    // Route roads after villages are placed
+    // Populate decorations before roads so trees land on grass tiles naturally
+    this._repopulateDecorationsWithZones()
+
+    // Route roads after decorations — trees already placed on grass tiles
     this._routeRoads()
 
-    // Repopulate decorations with zone awareness
-    this._repopulateDecorationsWithZones()
+    // Remove trees whose positions now fall on road beds
+    this._removeTreesOnRoadBeds()
   }
 
   /**
@@ -1358,6 +1361,18 @@ export class HexMap {
     for (const grid of this.grids.values()) {
       if (grid.state === HexGridState.POPULATED) {
         grid.populateDecorations(this.forestCells, this.villageCells)
+      }
+    }
+  }
+
+  /**
+   * After road tiles replace grass tiles, remove trees on the road bed.
+   * Trees on the grassy portions of road tiles are preserved.
+   */
+  _removeTreesOnRoadBeds() {
+    for (const grid of this.grids.values()) {
+      if (grid.state === HexGridState.POPULATED) {
+        grid.removeTreesOnRoadBed()
       }
     }
   }

@@ -7,7 +7,7 @@ import {
   LEVEL_HEIGHT, TILE_SURFACE,
   globalNoiseA, globalNoiseB, globalNoiseC,
   getCurrentTreeThreshold, getBuildingThreshold,
-  weightedPick, isCoastOrWater, getRoadDeadEndInfo,
+  weightedPick, isCoastOrWater, isFlatRoadTile, isOnRoadBed, hasRoadEdge, getRoadDeadEndInfo,
   TreesByType, TreeMeshNames,
   BuildingDefs, CoastBuildingDefs, BuildingMeshNames, CoastBuildingMeshNames,
   TOWER_TOP_MESH, TOWER_TOP_CHANCE,
@@ -990,8 +990,6 @@ export class Decorations {
               const c = levelColor(tile.level)
               c.b = rotY / (Math.PI * 2)
               this.mesh.setColorAt(instanceId, c)
-              const ox = (random() - 0.5) * 0.2
-              const oz = (random() - 0.5) * 0.2
               const y = tile.level * LEVEL_HEIGHT + TILE_SURFACE
               this.dummy.position.set(localPos.x + ox, y, localPos.z + oz)
               this.dummy.rotation.set(0, rotY, 0)
@@ -1169,6 +1167,25 @@ export class Decorations {
     this.rocks = filterOut(this.rocks, this.mesh)
     this.hills = filterOut(this.hills, this.mesh)
     this.mountains = filterOut(this.mountains, this.mesh)
+  }
+
+  /**
+   * Remove trees whose positions fall on the road bed of tiles that have
+   * become road tiles (called after road routing replaces grass → road).
+   * Trees on the grassy portions of road tiles are kept.
+   */
+  removeTreesOnRoadBed() {
+    if (!this.mesh) return
+    const apothem = (HexTileGeometry.HEX_WIDTH || 2) / 2
+    this.trees = this.trees.filter(tree => {
+      if (!hasRoadEdge(tree.tile.type)) return true  // not a road tile, keep
+      if (isOnRoadBed(tree.tile.type, tree.tile.rotation, tree.ox, tree.oz, apothem)) {
+        this._invalidDecIds.add(tree.instanceId)
+        this.mesh.deleteInstance(tree.instanceId)
+        return false  // on road bed, remove
+      }
+      return true  // on grassy part of road tile, keep
+    })
   }
 
   /**

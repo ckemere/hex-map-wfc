@@ -620,6 +620,13 @@ export class HexGrid {
   }
 
   /**
+   * Remove trees that fall on road beds after road tiles are placed.
+   */
+  removeTreesOnRoadBed() {
+    if (this.decorations) this.decorations.removeTreesOnRoadBed()
+  }
+
+  /**
    * Update all tile colors (for debug level visualization toggle)
    */
   updateTileColors() {
