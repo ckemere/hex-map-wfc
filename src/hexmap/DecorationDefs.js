@@ -97,6 +97,72 @@ export function hasRoadEdge(tileType) {
   return Object.values(def.edges).some(edge => edge === 'road')
 }
 
+// Check if a tile is a flat road tile (not sloped or crossing)
+export function isFlatRoadTile(tileType) {
+  const def = TILE_LIST[tileType]
+  if (!def) return false
+  const name = def.name
+  return name.startsWith('ROAD_') && !name.includes('SLOPE') && !name.includes('CROSSING')
+}
+
+// --- Road bed masking ---
+// Edge midpoint unit vectors for pointy-top hex (direction from center, length = 1)
+const EDGE_DIR_VECTORS = {
+  E:  { x: 1,    z: 0 },
+  NE: { x: 0.5,  z: -Math.sqrt(3) / 2 },
+  NW: { x: -0.5, z: -Math.sqrt(3) / 2 },
+  W:  { x: -1,   z: 0 },
+  SW: { x: -0.5, z: Math.sqrt(3) / 2 },
+  SE: { x: 0.5,  z: Math.sqrt(3) / 2 },
+}
+const HEX_DIRS = ['NE', 'E', 'SE', 'SW', 'W', 'NW']
+
+// Half-width of road bed exclusion zone (in world units, apothem ≈ 1.0)
+const ROAD_BED_HALF_WIDTH = 0.28
+
+// Distance from point (px,pz) to line segment (ax,az)→(bx,bz)
+function pointToSegmentDistSq(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az
+  const lenSq = dx * dx + dz * dz
+  if (lenSq === 0) { const ex = px - ax, ez = pz - az; return ex * ex + ez * ez }
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lenSq))
+  const projX = ax + t * dx, projZ = az + t * dz
+  const ex = px - projX, ez = pz - projZ
+  return ex * ex + ez * ez
+}
+
+/**
+ * Check if a local offset (lx, lz) relative to tile center falls on the road bed.
+ * @param {number} tileType - Tile type index
+ * @param {number} rotation - Tile rotation (0-5)
+ * @param {number} lx - Local x offset from tile center
+ * @param {number} lz - Local z offset from tile center
+ * @param {number} [apothem=1] - Half the hex flat-to-flat width
+ */
+export function isOnRoadBed(tileType, rotation, lx, lz, apothem = 1) {
+  const def = TILE_LIST[tileType]
+  if (!def) return false
+
+  // Find rotated road-edge directions
+  const roadEdgeDirs = []
+  for (let i = 0; i < 6; i++) {
+    if (def.edges[HEX_DIRS[i]] === 'road') {
+      const rotated = HEX_DIRS[(i + rotation) % 6]
+      roadEdgeDirs.push(rotated)
+    }
+  }
+  if (roadEdgeDirs.length === 0) return false
+
+  // Road bed = union of line segments from center (0,0) to each road-edge midpoint
+  const threshSq = ROAD_BED_HALF_WIDTH * ROAD_BED_HALF_WIDTH
+  for (const dir of roadEdgeDirs) {
+    const v = EDGE_DIR_VECTORS[dir]
+    const dSq = pointToSegmentDistSq(lx, lz, 0, 0, v.x * apothem, v.z * apothem)
+    if (dSq < threshSq) return true
+  }
+  return false
+}
+
 export function isCoastOrWater(tileType) {
   const def = TILE_LIST[tileType]
   if (!def) return false
