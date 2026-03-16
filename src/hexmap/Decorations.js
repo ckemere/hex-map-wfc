@@ -7,7 +7,7 @@ import {
   LEVEL_HEIGHT, TILE_SURFACE,
   globalNoiseA, globalNoiseB, globalNoiseC,
   getCurrentTreeThreshold, getBuildingThreshold,
-  weightedPick, isCoastOrWater, isFlatRoadTile, isOnRoadBed, getRoadDeadEndInfo,
+  weightedPick, isCoastOrWater, isFlatRoadTile, isOnRoadBed, hasRoadEdge, getRoadDeadEndInfo,
   TreesByType, TreeMeshNames,
   BuildingDefs, CoastBuildingDefs, BuildingMeshNames, CoastBuildingMeshNames,
   TOWER_TOP_MESH, TOWER_TOP_CHANCE,
@@ -205,19 +205,15 @@ export class Decorations {
     // Skip tiles that already have buildings (buildings placed first)
     const buildingTileIds = new Set(this.buildings.map(b => b.tile.id))
 
-    const apothem = (HexTileGeometry.HEX_WIDTH || 2) / 2
-
     for (const tile of hexTiles) {
-      // Allow flat grass tiles and flat road tiles (trees on grassy parts of roads)
-      const isRoad = isFlatRoadTile(tile.type)
-      if (tile.type !== TileType.GRASS && !isRoad) continue
+      // Only flat grass tiles (not slopes)
+      if (tile.type !== TileType.GRASS) continue
 
       // Skip tiles claimed by buildings
       if (buildingTileIds.has(tile.id)) continue
 
       // If forest zones are defined, only place trees in forest-zoned cells
-      // (road tiles always eligible — they get trees if noise says so)
-      if (!isRoad && forestTileIds && !forestTileIds.has(tile.id)) continue
+      if (forestTileIds && !forestTileIds.has(tile.id)) continue
 
       // Get local position (relative to grid group)
       const localPos = HexTileGeometry.getWorldPosition(
@@ -233,7 +229,7 @@ export class Decorations {
       // When forest zones drive placement, noise only selects tree type/density.
       // Without zones, noise threshold decides whether to place at all.
       let treeType, noiseVal
-      if (forestTileIds && !isRoad) {
+      if (forestTileIds) {
         // Zone already decided this cell gets trees — use noise for variety only
         treeType = noiseA >= noiseB ? 'A' : 'B'
         noiseVal = Math.max(noiseA, noiseB)
@@ -261,12 +257,10 @@ export class Decorations {
 
       // Map noise value to density tier (0-3)
       // When zone-driven, use raw noise [0,1] for density; otherwise threshold..1.0
-      const normalizedNoise = (forestTileIds && !isRoad)
+      const normalizedNoise = forestTileIds
         ? noiseVal  // already [0,1]
         : (noiseVal - threshold) / (1 - threshold)
-      // Road tiles only get single trees (tier 0) to avoid large clusters on the roadside
-      const maxTier = isRoad ? 0 : 3
-      const tierIndex = Math.min(maxTier, Math.max(0, Math.floor(normalizedNoise * 4)))
+      const tierIndex = Math.min(3, Math.max(0, Math.floor(normalizedNoise * 4)))
       // At tier 0 (single tree), 30% chance to use a C/D/E variant instead
       let meshName
       if (tierIndex === 0 && random() < 0.3) {
@@ -275,18 +269,14 @@ export class Decorations {
       } else {
         meshName = TreesByType[treeType][tierIndex]
       }
-      // Compute position offset before allocating instance (seeded random order preserved)
-      const rotationY = random() * Math.PI * 2
-      const ox = (random() - 0.5) * 0.4
-      const oz = (random() - 0.5) * 0.4
-
-      // On road tiles, skip if the tree position falls on the road bed
-      if (isRoad && isOnRoadBed(tile.type, tile.rotation, ox, oz, apothem)) continue
-
       const geomId = this.geomIds.get(meshName)
       const instanceId = this._addInstance(this.mesh, geomId)
       if (instanceId === -1) break
 
+      // Position at tile center with random offset (local coords since mesh is in group)
+      const rotationY = random() * Math.PI * 2
+      const ox = (random() - 0.5) * 0.4
+      const oz = (random() - 0.5) * 0.4
       const c = levelColor(tile.level)
       c.b = rotationY / (Math.PI * 2)
       this.mesh.setColorAt(instanceId, c)
@@ -971,9 +961,8 @@ export class Decorations {
         }
       }
 
-      // Trees (noise-based, skip tiles with buildings; allow flat road tiles with road-bed masking)
-      const isRoadTile = isFlatRoadTile(tile.type)
-      if ((tile.type === TileType.GRASS || isRoadTile) && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
+      // Trees (noise-based, skip tiles with buildings)
+      if (tile.type === TileType.GRASS && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
         const worldX = localPos.x + offsetX
         const worldZ = localPos.z + offsetZ
         const noiseA = globalNoiseA.scaled2D(worldX, worldZ)
@@ -991,15 +980,8 @@ export class Decorations {
           else { treeType = 'B'; noiseVal = noiseB }
 
           if (this.trees.length < MAX_TREES - 1) {
-            const ox = (random() - 0.5) * 0.2
-            const oz = (random() - 0.5) * 0.2
-            // Skip if tree falls on road bed
-            if (isRoadTile && isOnRoadBed(tile.type, tile.rotation, ox, oz, (HexTileGeometry.HEX_WIDTH || 2) / 2)) {
-              continue
-            }
             const normalizedNoise = (noiseVal - threshold) / (1 - threshold)
-            const maxTier = isRoadTile ? 0 : 3
-            const tierIndex = Math.min(maxTier, Math.floor(normalizedNoise * 4))
+            const tierIndex = Math.min(3, Math.floor(normalizedNoise * 4))
             const meshName = TreesByType[treeType][tierIndex]
             const geomId = this.geomIds.get(meshName)
             const instanceId = this._addInstance(this.mesh, geomId)
@@ -1185,6 +1167,25 @@ export class Decorations {
     this.rocks = filterOut(this.rocks, this.mesh)
     this.hills = filterOut(this.hills, this.mesh)
     this.mountains = filterOut(this.mountains, this.mesh)
+  }
+
+  /**
+   * Remove trees whose positions fall on the road bed of tiles that have
+   * become road tiles (called after road routing replaces grass → road).
+   * Trees on the grassy portions of road tiles are kept.
+   */
+  removeTreesOnRoadBed() {
+    if (!this.mesh) return
+    const apothem = (HexTileGeometry.HEX_WIDTH || 2) / 2
+    this.trees = this.trees.filter(tree => {
+      if (!hasRoadEdge(tree.tile.type)) return true  // not a road tile, keep
+      if (isOnRoadBed(tree.tile.type, tree.tile.rotation, tree.ox, tree.oz, apothem)) {
+        this._invalidDecIds.add(tree.instanceId)
+        this.mesh.deleteInstance(tree.instanceId)
+        return false  // on road bed, remove
+      }
+      return true  // on grassy part of road tile, keep
+    })
   }
 
   /**
