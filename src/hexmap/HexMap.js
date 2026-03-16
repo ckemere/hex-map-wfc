@@ -1448,9 +1448,14 @@ export class HexMap {
    * removes trees that land on the new road beds.
    */
   regenerateRoads() {
-    this._routeRoads()                        // reverts old roads, places new ones
-    this._repopulateDecorationsWithZones()     // re-place trees on current tile types
-    this._removeTreesOnRoadBeds()             // cull trees on new road beds
+    // Revert old roads to grass before decorating
+    this._revertRoadReplacements()
+    // Re-place trees on restored grass tiles
+    this._repopulateDecorationsWithZones()
+    // Route new roads (skips internal revert since we already did it)
+    this._routeRoads()
+    // Cull trees that now sit on road beds
+    this._removeTreesOnRoadBeds()
   }
 
   /**
