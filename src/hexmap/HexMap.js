@@ -1344,13 +1344,11 @@ export class HexMap {
     this.villageCells = villagePlacer.place()
     log(`[VILLAGES] Placed ${this.villageCells.size} village cells`, 'color: #DAA520')
 
-    // Populate decorations before roads so trees land on grass tiles naturally
-    this._repopulateDecorationsWithZones()
-
-    // Route roads after decorations — trees already placed on grass tiles
+    // Route roads after villages are placed
     this._routeRoads()
 
-    // Remove decorations on tiles that are now roads
+    // Repopulate decorations with zone awareness, then clean up road tiles
+    this._repopulateDecorationsWithZones()
     this._removeDecorationsOnRoadTiles()
   }
 
@@ -1445,13 +1443,8 @@ export class HexMap {
    * removes trees that land on the new road beds.
    */
   regenerateRoads() {
-    // Revert old roads to grass before decorating
-    this._revertRoadReplacements()
-    // Re-place trees on restored grass tiles
-    this._repopulateDecorationsWithZones()
-    // Route new roads (internal revert is no-op since we already did it)
     this._routeRoads()
-    // Remove decorations on tiles that are now roads
+    this._repopulateDecorationsWithZones()
     this._removeDecorationsOnRoadTiles()
   }
 
