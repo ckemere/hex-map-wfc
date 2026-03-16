@@ -120,31 +120,39 @@ const GoalType = {
 const GOAL_PRIORITY = { [GoalType.COAST]: 0, [GoalType.CONFLUENCE]: 1, [GoalType.EDGE]: 2 }
 
 // ---------------------------------------------------------------------------
-// 3-edge river tile templates (used for tile selection and confluence validation)
+// Direction-set → tile lookup table (6-bit bitmask, 64 entries)
 // ---------------------------------------------------------------------------
 
-const RIVER_TILES_3 = [
-  { type: TileType.RIVER_D, dirs: [0, 2, 4] },  // NE, SE, W — evenly spaced (120° each)
-  { type: TileType.RIVER_E, dirs: [0, 1, 4] },  // NE, E, W — two adjacent + one opposite
-  { type: TileType.RIVER_F, dirs: [1, 2, 4] },  // E, SE, W — two adjacent + one opposite
+/** Convert a Set or iterable of direction indices (0–5) to a 6-bit mask. */
+function dirSetToMask(dirs) {
+  let mask = 0
+  for (const d of dirs) mask |= (1 << d)
+  return mask
+}
+
+/** All river tile templates: unrotated direction indices for each tile type. */
+const ALL_RIVER_TILES = [
+  { type: TileType.RIVER_END,    dirs: [4] },        // 1-edge: W
+  { type: TileType.RIVER_A,      dirs: [1, 4] },     // 2-edge straight: E, W
+  { type: TileType.RIVER_B,      dirs: [0, 4] },     // 2-edge curve: NE, W
+  { type: TileType.RIVER_D,      dirs: [0, 2, 4] },  // 3-edge: NE, SE, W
+  { type: TileType.RIVER_E,      dirs: [0, 1, 4] },  // 3-edge: NE, E, W
+  { type: TileType.RIVER_F,      dirs: [1, 2, 4] },  // 3-edge: E, SE, W
 ]
 
 /**
- * Try to find a rotation r such that rotating the template's direction set
- * produces exactly the required direction set.
- *
- * @param {number[]} required — sorted array of 3 direction indices
- * @param {number[]} template — sorted array of 3 direction indices (unrotated)
- * @returns {number|null} rotation (0–5) or null if no match
+ * Pre-computed lookup: bitmask → { type, rotation }.
+ * For every tile template at every rotation, compute the resulting bitmask
+ * and store the first match. Covers all 64 possible direction combinations.
  */
-function matchTile3(required, template) {
+const RIVER_TILE_LOOKUP = new Array(64).fill(null)
+for (const { type, dirs } of ALL_RIVER_TILES) {
   for (let r = 0; r < 6; r++) {
-    const rotated = template.map(d => (d + r) % 6).sort((a, b) => a - b)
-    if (rotated[0] === required[0] && rotated[1] === required[1] && rotated[2] === required[2]) {
-      return r
+    const mask = dirs.reduce((m, d) => m | (1 << ((d + r) % 6)), 0)
+    if (!RIVER_TILE_LOOKUP[mask]) {
+      RIVER_TILE_LOOKUP[mask] = { type, rotation: r }
     }
   }
-  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -205,9 +213,9 @@ export class RiverRouter {
     // Separate from riverCells so that per-river BFS trees don't interfere.
     const globalOwned = new Map()
 
-    // globalDirs: track river edge directions per cell so we can validate
-    // that confluences won't produce 3 consecutive edges (no valid tile).
-    const globalDirs = new Map() // cubeKey → Set<dirIndex>
+    // globalDirs: track river edge directions per cell as bitmasks so we
+    // can validate confluences via the lookup table.
+    const globalDirs = new Map() // cubeKey → 6-bit direction bitmask
 
     for (let i = 0; i < sources.length; i++) {
       this._routeRiver(sources[i], i, globalOwned, globalDirs)
@@ -562,27 +570,27 @@ export class RiverRouter {
 
     this.rivers.push({ source: sourceKey, path, endType })
 
-    // Update globalDirs with directions for all cells in this path
+    // Update globalDirs bitmasks with directions for all cells in this path
     for (let i = 0; i < path.length; i++) {
       const key = path[i]
       const cell = this.globalCells.get(key)
       if (!cell) continue
-      if (!globalDirs.has(key)) globalDirs.set(key, new Set())
-      const dirs = globalDirs.get(key)
+      let mask = globalDirs.get(key) ?? 0
       if (i > 0) {
         const prevCell = this.globalCells.get(path[i - 1])
         if (prevCell) {
           const d = this._directionBetween(cell, prevCell)
-          if (d >= 0) dirs.add(d)
+          if (d >= 0) mask |= (1 << d)
         }
       }
       if (i < path.length - 1) {
         const nextCell = this.globalCells.get(path[i + 1])
         if (nextCell) {
           const d = this._directionBetween(cell, nextCell)
-          if (d >= 0) dirs.add(d)
+          if (d >= 0) mask |= (1 << d)
         }
       }
+      globalDirs.set(key, mask)
     }
   }
 
@@ -592,37 +600,18 @@ export class RiverRouter {
 
   /**
    * Check whether adding a new river direction to an existing cell would
-   * produce a valid 3-edge pattern. Three consecutive directions (e.g.
-   * NE, E, SE) have no valid tile, so those confluences must be rejected.
+   * produce a direction set that has a valid river tile.
    *
    * @param {string} cellKey — the confluence cell
    * @param {number} newDir — the new direction being added
-   * @param {Map<string, Set<number>>} globalDirs — existing directions per cell
+   * @param {Map<string, number>} globalDirs — existing direction bitmask per cell
    * @returns {boolean}
    */
   _isValidConfluence(cellKey, newDir, globalDirs) {
-    const existing = globalDirs.get(cellKey)
-    if (!existing || existing.size < 2) return true // ≤2 existing + 1 new = ≤3, check pattern
-
-    // Build the combined direction set
-    const combined = new Set(existing)
-    combined.add(newDir)
-
-    // If still ≤2 directions (newDir was already present), always valid
-    if (combined.size <= 2) return true
-
-    // For 3+ directions, check that a valid tile exists
-    if (combined.size === 3) {
-      const sorted = [...combined].sort((a, b) => a - b)
-      // Check against the 3-edge tile templates
-      for (const template of RIVER_TILES_3) {
-        if (matchTile3(sorted, template.dirs) !== null) return true
-      }
-      return false // no valid tile for this 3-edge pattern
-    }
-
-    // 4+ edges: no valid tile exists
-    return false
+    const existing = globalDirs.get(cellKey) ?? 0
+    const combined = existing | (1 << newDir)
+    if (combined === existing) return true // direction already present
+    return RIVER_TILE_LOOKUP[combined] !== null
   }
 
   /**
@@ -888,110 +877,30 @@ export class RiverRouter {
 }
 
 // ---------------------------------------------------------------------------
-// River tile selection — pure function mapping direction sets to tile+rotation
+// River tile selection — lookup-based mapping from direction sets to tile+rotation
 // ---------------------------------------------------------------------------
 
 /**
- * Available river tile templates: each entry lists the direction indices where
- * river edges exist in the tile's unrotated (rotation=0) form.
- *
- * Direction indices: 0=NE, 1=E, 2=SE, 3=SW, 4=W, 5=NW
- */
-const RIVER_TILES_2 = [
-  // 2-edge tiles (sorted by unrotated river edge indices)
-  { type: TileType.RIVER_A,       dirs: [1, 4], sep: 3 },  // E, W — straight (180°)
-  { type: TileType.RIVER_A_CURVY, dirs: [1, 4], sep: 3 },  // E, W — straight curvy variant
-  { type: TileType.RIVER_B,       dirs: [0, 4], sep: 2 },  // NE, W — gentle curve (120°)
-]
-
-/**
  * Given a set of required river direction indices, find the best tile type
- * and rotation.
+ * and rotation via the pre-computed lookup table.
  *
  * @param {Set<number>} requiredDirs — direction indices (0–5) needing river edges
  * @returns {{ type: number, rotation: number } | null}
  */
 function selectRiverTile(requiredDirs) {
-  const n = requiredDirs.size
+  const mask = dirSetToMask(requiredDirs)
+  if (mask === 0) return null
 
-  if (n === 0) return null
-
-  // 1 edge — RIVER_END (unrotated river edge at index 4 = W)
-  if (n === 1) {
-    const dir = requiredDirs.values().next().value
-    // (4 + rotation) % 6 === dir  →  rotation = (dir - 4 + 6) % 6
-    const rotation = (dir - 4 + 6) % 6
-    return { type: TileType.RIVER_END, rotation }
-  }
-
-  // 2 edges — determine angular separation to pick tile
-  if (n === 2) {
-    const [a, b] = [...requiredDirs].sort((x, y) => x - y)
-    const sep = Math.min(b - a, 6 - (b - a))
-
-    if (sep === 3) {
-      // Straight (180°) — RIVER_A or RIVER_A_CURVY
-      // Unrotated: river edges at indices 1, 4 (E, W).
-      // We need (1 + rotation) % 6 === a and (4 + rotation) % 6 === b (or vice versa).
-      // Since sep=3, if (1 + r) % 6 === a then (4 + r) % 6 === (a + 3) % 6.
-      // We need {(1+r)%6, (4+r)%6} === {a, b}.
-      const rotation = (a - 1 + 6) % 6
-      // Randomly pick straight or curvy
-      const type = random() < 0.5 ? TileType.RIVER_A : TileType.RIVER_A_CURVY
-      return { type, rotation }
-    }
-
-    if (sep === 2) {
-      // Gentle curve (120°) — RIVER_B
-      // Unrotated: river edges at indices 0, 4 (NE, W). Separation = 4 on the
-      // index ring, but angular separation = min(4, 6-4) = 2 steps.
-      // The two river edges are separated by 2 steps going one way (the "short" arc).
-      // For RIVER_B unrotated: 0 and 4. Short arc: 0→5→4 = 2 steps "backwards",
-      // or equivalently 4→5→0 = 2 steps forward. Actually: min(|4-0|, 6-|4-0|) = min(4,2) = 2. ✓
-      //
-      // We need to find rotation r such that {(0+r)%6, (4+r)%6} = {a, b}.
-      // Try both orientations:
-      for (const flip of [false, true]) {
-        const d0 = flip ? b : a
-        const d1 = flip ? a : b
-        const r = (d0 - 0 + 6) % 6
-        if ((4 + r) % 6 === d1) return { type: TileType.RIVER_B, rotation: r }
-      }
-      // Shouldn't reach here for sep=2, but fallback
-      return null
-    }
-
-    // sep === 1 (60° — sharp bend): no valid tile exists.
-    // BFS direction constraints should prevent this, but log if it happens.
-    if (sep === 1) {
-      console.warn(`[RIVERS] Unexpected 60° bend in river path — no valid tile`)
-    }
-
+  const match = RIVER_TILE_LOOKUP[mask]
+  if (!match) {
+    console.warn(`[RIVERS] No valid tile for direction mask 0b${mask.toString(2).padStart(6, '0')}`)
     return null
   }
 
-  // 3 edges — match against the three 3-way junction tiles
-  if (n === 3) {
-    const sorted = [...requiredDirs].sort((x, y) => x - y)
-
-    for (const template of RIVER_TILES_3) {
-      const match = matchTile3(sorted, template.dirs)
-      if (match !== null) return { type: template.type, rotation: match }
-    }
-
-    // No exact match — shouldn't happen with D/E/F covering all 3-edge patterns
-    // but fall back to RIVER_D with best-effort rotation
-    const rotation = (sorted[0] - 0 + 6) % 6
-    return { type: TileType.RIVER_D, rotation }
+  // Randomize straight river variant (A vs A_CURVY share the same edge geometry)
+  if (match.type === TileType.RIVER_A && random() < 0.5) {
+    return { type: TileType.RIVER_A_CURVY, rotation: match.rotation }
   }
 
-  // 4+ edges — no tiles exist. Use RIVER_D as best approximation.
-  if (n >= 4) {
-    // Pick 3 most spread-out directions
-    const dir = requiredDirs.values().next().value
-    const rotation = (dir - 0 + 6) % 6
-    return { type: TileType.RIVER_D, rotation }
-  }
-
-  return null
+  return { type: match.type, rotation: match.rotation }
 }
