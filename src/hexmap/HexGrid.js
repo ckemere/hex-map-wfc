@@ -611,7 +611,7 @@ export class HexGrid {
     }
 
     this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.gridRadius, { villageTileIds: localVillageTileIds })
-    this.decorations.populate(this.hexTiles, this.gridRadius, { forestTileIds: localForestTileIds })
+    this.decorations.populate(this.hexTiles, this.gridRadius, this.hexGrid, { forestTileIds: localForestTileIds })
     this.decorations.populateFlowers(this.hexTiles, this.gridRadius)
     this.decorations.populateRocks(this.hexTiles, this.gridRadius)
     this.decorations.populateHillsAndMountains(this.hexTiles, this.gridRadius)
