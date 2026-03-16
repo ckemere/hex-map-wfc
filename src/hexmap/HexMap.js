@@ -1350,8 +1350,8 @@ export class HexMap {
     // Route roads after decorations — trees already placed on grass tiles
     this._routeRoads()
 
-    // Remove trees on tiles that are now roads
-    this._removeTreesOnRoadTiles()
+    // Remove decorations on tiles that are now roads
+    this._removeDecorationsOnRoadTiles()
   }
 
   /**
@@ -1368,10 +1368,10 @@ export class HexMap {
   /**
    * Remove all trees on tiles that became road tiles after routing.
    */
-  _removeTreesOnRoadTiles() {
+  _removeDecorationsOnRoadTiles() {
     for (const grid of this.grids.values()) {
       if (grid.state === HexGridState.POPULATED) {
-        grid.removeTreesOnRoadTiles()
+        grid.removeDecorationsOnRoadTiles()
       }
     }
   }
@@ -1451,8 +1451,8 @@ export class HexMap {
     this._repopulateDecorationsWithZones()
     // Route new roads (internal revert is no-op since we already did it)
     this._routeRoads()
-    // Remove trees on tiles that are now roads
-    this._removeTreesOnRoadTiles()
+    // Remove decorations on tiles that are now roads
+    this._removeDecorationsOnRoadTiles()
   }
 
   /**
