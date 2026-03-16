@@ -1,6 +1,7 @@
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
-import { setTreeNoiseFrequency, setTreeThreshold, setBuildingNoiseFrequency, setBuildingThreshold } from './hexmap/Decorations.js'
+import { setTreeNoiseFrequency, setTreeThreshold, setBuildingNoiseFrequency, setBuildingThreshold, rebuildNoiseTables } from './hexmap/Decorations.js'
 import { HexTile } from './hexmap/HexTiles.js'
+import { getSeed, setSeed } from './SeededRandom.js'
 
 export class GUIManager {
   constructor(app) {
@@ -61,7 +62,7 @@ export class GUIManager {
       dpr: 1, // Will be set dynamically based on device
     },
     roads: {
-      animateWFC: true,
+      animateWFC: false,
       showOutlines: false,
       includeRiversInWFC: false,
       includeRoadsInWFC: false,
@@ -186,13 +187,26 @@ export class GUIManager {
     })
     allParams.roads.slopeBias = 1.0
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
-    gui.add(allParams.roads, 'includeRiversInWFC').name('Rivers in WFC')
-    gui.add(allParams.roads, 'includeRoadsInWFC').name('Roads in WFC')
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
+
+    // Seed control
+    allParams.seed = getSeed() ?? 0
+    const seedController = gui.add(allParams, 'seed', 0, 99999, 1).name('Seed')
+    this.seedController = seedController
+    gui.add({ rebuildWithSeed: async () => {
+      const seed = Math.floor(allParams.seed)
+      setSeed(seed)
+      rebuildNoiseTables()
+      await app.city.reset()
+      app.city.setHelpersVisible(allParams.debug.hexGrid)
+      app.city.autoBuild([
+        [0,0],[0,-1],[1,-1],[1,0],[0,1],[-1,0],[-1,-1],[-1,-2],[0,-2],[1,-2],[2,-1],[2,0],[2,1],[1,1],[0,2],[-1,1],[-2,1],[-2,0],[-2,-1]
+      ])
+    } }, 'rebuildWithSeed').name('Build with Seed')
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
-    gui.add({ regenerateRoads: () => app.city.regenerateRoads() }, 'regenerateRoads').name('Regenerate Roads')
+    gui.add({ regenerateRoads: () => app.city.regenerateRoads() }, 'regenerateRoads').name('Regenerate Roads and Decorations')
     gui.add({ reset: () => {
       app.city.reset()
       app.city.setHelpersVisible(allParams.debug.hexGrid)
