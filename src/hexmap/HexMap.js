@@ -1090,6 +1090,7 @@ export class HexMap {
     this.droppedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this._roadOriginalTiles = []
     this.clearTileLabels()
     if (this.riverOverlay) this.riverOverlay.dispose()
 
@@ -1788,6 +1789,7 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this._roadOriginalTiles = []
     this.clearTileLabels()
 
     // Dispose debug overlays
@@ -1837,6 +1839,7 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this._roadOriginalTiles = []
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
