@@ -7,7 +7,7 @@ import {
   LEVEL_HEIGHT, TILE_SURFACE,
   globalNoiseA, globalNoiseB, globalNoiseC,
   getCurrentTreeThreshold, getBuildingThreshold,
-  weightedPick, isCoastOrWater, hasRoadEdge, getRoadDeadEndInfo,
+  weightedPick, isCoastOrWater, getRoadDeadEndInfo,
   TreesByType, TreeMeshNames,
   BuildingDefs, CoastBuildingDefs, BuildingMeshNames, CoastBuildingMeshNames,
   TOWER_TOP_MESH, TOWER_TOP_CHANCE,
@@ -191,7 +191,7 @@ export class Decorations {
     this.geomIds = idMap
   }
 
-  populate(hexTiles, gridRadius, hexGrid, options = {}) {
+  populate(hexTiles, gridRadius, options = {}) {
     this.clearTrees()
     this.dummy.rotation.set(0, 0, 0)  // Reset from windmill fan animation
 
@@ -205,32 +205,12 @@ export class Decorations {
     // Skip tiles that already have buildings (buildings placed first)
     const buildingTileIds = new Set(this.buildings.map(b => b.tile.id))
 
-    const size = hexGrid ? hexGrid.length : 0
-
     for (const tile of hexTiles) {
       // Only flat grass tiles (not slopes)
       if (tile.type !== TileType.GRASS) continue
 
       // Skip tiles claimed by buildings
       if (buildingTileIds.has(tile.id)) continue
-
-      // Skip grass tiles adjacent to roads (trees would visually overlap the road)
-      if (hexGrid) {
-        let adjacentToRoad = false
-        for (const dir of HexDir) {
-          const { dx, dz } = getHexNeighborOffset(tile.gridX, tile.gridZ, dir)
-          const nx = tile.gridX + dx
-          const nz = tile.gridZ + dz
-          if (nx >= 0 && nx < size && nz >= 0 && nz < size) {
-            const neighbor = hexGrid[nx]?.[nz]
-            if (neighbor && hasRoadEdge(neighbor.type)) {
-              adjacentToRoad = true
-              break
-            }
-          }
-        }
-        if (adjacentToRoad) continue
-      }
 
       // If forest zones are defined, only place trees in forest-zoned cells
       if (forestTileIds && !forestTileIds.has(tile.id)) continue
@@ -981,24 +961,8 @@ export class Decorations {
         }
       }
 
-      // Trees (noise-based, skip tiles with buildings or adjacent to roads)
-      let adjacentToRoad = false
-      if (hexGrid) {
-        const gridSize = hexGrid.length
-        for (const dir of HexDir) {
-          const { dx, dz } = getHexNeighborOffset(tile.gridX, tile.gridZ, dir)
-          const nx = tile.gridX + dx
-          const nz = tile.gridZ + dz
-          if (nx >= 0 && nx < gridSize && nz >= 0 && nz < gridSize) {
-            const neighbor = hexGrid[nx]?.[nz]
-            if (neighbor && hasRoadEdge(neighbor.type)) {
-              adjacentToRoad = true
-              break
-            }
-          }
-        }
-      }
-      if (tile.type === TileType.GRASS && !adjacentToRoad && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
+      // Trees (noise-based, skip tiles with buildings)
+      if (tile.type === TileType.GRASS && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
         const worldX = localPos.x + offsetX
         const worldZ = localPos.z + offsetZ
         const noiseA = globalNoiseA.scaled2D(worldX, worldZ)
