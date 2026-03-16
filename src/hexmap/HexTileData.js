@@ -150,6 +150,14 @@ export const TILE_LIST = [
     edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
     weight: 4, preventChaining: true },
 
+  // Fields (post-WFC tile replacements — placed by FieldPlacer)
+  { name: 'FIELD_GRAIN', mesh: 'building_grain',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 0 },
+  { name: 'FIELD_DIRT', mesh: 'building_dirt',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 0 },
+
   // High slopes (2-level rise)
   { name: 'GRASS_SLOPE_HIGH', mesh: 'hex_grass_sloped_high',
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },

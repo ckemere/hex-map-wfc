@@ -67,6 +67,7 @@ export class GUIManager {
       includeRiversInWFC: false,
       includeRoadsInWFC: false,
       roadDensity: 0.5,
+      enableFields: false,
     },
     decoration: {
       treeNoiseFreq: 0.05,
@@ -188,6 +189,7 @@ export class GUIManager {
     allParams.roads.slopeBias = 1.0
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
+    gui.add(allParams.roads, 'enableFields').name('Wheat Fields')
 
     // Seed control
     allParams.seed = getSeed() ?? 0
