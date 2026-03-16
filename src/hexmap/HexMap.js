@@ -1443,6 +1443,22 @@ export class HexMap {
   // ---------------------------------------------------------------------------
 
   /**
+   * Public method for regenerating roads: reverts old roads, repopulates
+   * decorations on the restored grass tiles, routes new roads, then
+   * removes trees that land on the new road beds.
+   */
+  regenerateRoads() {
+    // Revert old roads to grass before decorating
+    this._revertRoadReplacements()
+    // Re-place trees on restored grass tiles
+    this._repopulateDecorationsWithZones()
+    // Route new roads (skips internal revert since we already did it)
+    this._routeRoads()
+    // Cull trees that now sit on road beds
+    this._removeTreesOnRoadBeds()
+  }
+
+  /**
    * Run road routing on the current globalCells and update the debug overlay.
    * Called automatically after village placement.
    */

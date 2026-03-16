@@ -192,7 +192,7 @@ export class GUIManager {
 
     // Action buttons
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
-    gui.add({ regenerateRoads: () => app.city._routeRoads() }, 'regenerateRoads').name('Regenerate Roads')
+    gui.add({ regenerateRoads: () => app.city.regenerateRoads() }, 'regenerateRoads').name('Regenerate Roads')
     gui.add({ reset: () => {
       app.city.reset()
       app.city.setHelpersVisible(allParams.debug.hexGrid)
