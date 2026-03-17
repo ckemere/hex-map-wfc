@@ -3,6 +3,7 @@ import { TILE_LIST, TileType, HexDir, getHexNeighborOffset, rotateHexEdges, LEVE
 import { HexTileGeometry } from './HexTiles.js'
 import { random, shuffle } from '../SeededRandom.js'
 import gsap from 'gsap'
+import { setStatus, setStatusAsync, log, App } from '../App.js'
 import {
   LEVEL_HEIGHT, TILE_SURFACE,
   globalNoiseA, globalNoiseB, globalNoiseC,
@@ -16,8 +17,10 @@ import {
   HillDefs, MountainDefs, HillMeshNames, MountainMeshNames, RiverEndDefs,
   RareBuildingNames, RareBuildingDefs2,
   WHITE, levelColor,
-  MAX_TREES, MAX_BUILDINGS, MAX_BRIDGES, MAX_WATERLILIES, MAX_FLOWERS, MAX_ROCKS, MAX_HILLS, MAX_MOUNTAINS,
+  MAX_TREES, MAX_BUILDINGS, MAX_BRIDGES, MAX_WATERLILIES, MAX_FLOWERS, MAX_ROCKS, MAX_HILLS, MAX_MOUNTAINS, MAX_GRAIN_FIELDS,
   MAX_DEC_INSTANCES,
+  GrainFieldsDefs,
+  GrainFieldsNames,
 } from './DecorationDefs.js'
 
 // Re-export noise functions so existing imports from Decorations.js still work
@@ -44,6 +47,7 @@ export class Decorations {
       ...HillMeshNames,
       ...MountainMeshNames,
       ...RareBuildingNames,
+      ...GrainFieldsNames,
     ]
 
     // Windmill fan needs centering
@@ -98,6 +102,7 @@ export class Decorations {
     this.rocks = []
     this.hills = []
     this.mountains = []
+    this.grainFields = []
 
     // Instance IDs invalidated by clearDecorationsAt (prevents stale animation tweens)
     this._invalidDecIds = new Set()
@@ -152,7 +157,7 @@ export class Decorations {
       ...BuildingMeshNames, TOWER_TOP_MESH, ...CoastBuildingMeshNames, ...WindmillMeshNames,
       ...BridgeMeshNames, ...WaterlilyMeshNames, ...RockMeshNames,
       ...HillMeshNames, ...MountainMeshNames,
-      ...RareBuildingNames,
+      ...RareBuildingNames, ...GrainFieldsNames,
     ]
     const allGeoms = new Map()
     for (const name of allNames) {
@@ -815,6 +820,85 @@ export class Decorations {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Field placement (wheat / dirt tiles on grass)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Place field tiles on eligible grass cells.
+   * Currently uses a simple 25% random chance on undecorated flat grass.
+   *
+   * TODO: Replace the random chance below with a structured placement pass.
+   * Suggested approach: loop through every globalCell, check adjacent tile
+   * types and decorations (e.g. near villages, along roads), and build a
+   * fieldCells Set<cubeKey> with smarter criteria. Then replace the loop
+   * below to iterate fieldCells instead of rolling random per-cell.
+   */
+  
+  populateGrainFields(hexTiles, gridRadius) {
+    this.clearGrainFields()
+
+    if (!this.mesh || this.geomIds.size === 0) return
+    
+    const enableFields = App.instance?.params?.roads?.enableFields ?? false
+    if (!enableFields) return
+      
+    // Exclude tiles with buildings only (flowers can share with trees)
+    const buildingTileIds = new Set(this.buildings.map(b => b.tile.id))
+    const treeTileIds = new Set(this.trees.map(t => t.tile.id))
+    const flowerTileIds = new Set(this.flowers.map(t => t.tile.id))
+
+    // Score candidate tiles by noise value
+    const candidates = []
+    for (const tile of hexTiles) {
+      if (tile.type !== TileType.GRASS) continue
+      if (buildingTileIds.has(tile.id)) continue
+      if (treeTileIds.has(tile.id)) continue
+      if (flowerTileIds.has(tile.id)) continue
+      
+      const localPos = HexTileGeometry.getWorldPosition(
+        tile.gridX - gridRadius,
+        tile.gridZ - gridRadius
+      )
+
+      let noise = random()
+      // noise = Math.max(globalNoiseA.scaled2D(worldX, worldZ), globalNoiseB.scaled2D(worldX, worldZ))
+
+      // This is where we could boost, I guess??!!
+
+      candidates.push({ tile, localPos, noise })
+    }
+
+    // Sort by closeness to just below tree threshold (tight forest edges)
+    // const target = getCurrentTreeThreshold() + 0.05
+    // candidates.sort((a, b) => Math.abs(a.noise - target) - Math.abs(b.noise - target))
+    const budget = 7 + Math.floor(random() * 15)  // 7-21
+    const selected = candidates.slice(0, budget)
+
+    log(`[GRAINFIELDS] ${candidates.length} candidates, ${selected.length} selected`, 'color: #DAA520')
+
+    for (const { tile, localPos, noise } of selected) {
+
+      if (this.grainFields.length >= MAX_GRAIN_FIELDS - 1) break
+
+      const meshName = weightedPick(GrainFieldsDefs)
+      const ox = 0
+      const oz = 0
+      const rotationY = 0
+      const scale = 1
+      const instanceId = this._placeInstance(this.mesh, this.geomIds, meshName, localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE, localPos.z + oz, rotationY, scale, tile.level)
+      if (instanceId === -1) {
+        log(`[Fields] placeInstance error`, 'color: #DAA520')
+        break
+      }
+      this.grainFields.push({ tile, meshName, instanceId, rotationY, ox, oz })
+
+    }
+
+    log(`[GRAINFIELDS] Planned ${this.grainFields.length} field cells`, 'color: #DAA520')
+
+  }
+
   clear() {
     this.clearTrees()
     this.clearBuildings()
@@ -824,6 +908,7 @@ export class Decorations {
     this.clearRocks()
     this.clearHills()
     this.clearMountains()
+    this.clearGrainFields()
     this._invalidDecIds.clear()
   }
 
@@ -841,6 +926,7 @@ export class Decorations {
   clearRocks() { this._clearInstances(this.rocks, this.mesh); this.rocks = [] }
   clearHills() { this._clearInstances(this.hills, this.mesh); this.hills = [] }
   clearMountains() { this._clearInstances(this.mountains, this.mesh); this.mountains = [] }
+  clearGrainFields() { this._clearInstances(this.grainFields, this.mesh); this.fieds = [] }
   /**
    * Add a bridge on a single tile if it's a river crossing
    * @param {HexTile} tile - Tile to check
@@ -1167,6 +1253,7 @@ export class Decorations {
     this.rocks = filterOut(this.rocks, this.mesh)
     this.hills = filterOut(this.hills, this.mesh)
     this.mountains = filterOut(this.mountains, this.mesh)
+    this.grainFields = filterOut(this.grainFields, this.mesh)
   }
 
   /**

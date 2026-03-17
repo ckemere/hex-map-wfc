@@ -34,6 +34,7 @@ export function hideAllInstances(grid) {
       [grid.decorations.rocks, mesh],
       [grid.decorations.hills, mesh],
       [grid.decorations.mountains, mesh],
+      [grid.decorations.grainFields, mesh],
     ]
     for (const [items, mesh] of pairs) {
       for (const item of items) mesh.setMatrixAt(item.instanceId, dummy.matrix)
@@ -168,6 +169,12 @@ function buildDecorationMap(grid) {
     x: pos.x, y: m.tile.level * LEVEL_HEIGHT + TILE_SURFACE, z: pos.z,
     rotationY: m.rotationY ?? 0
   }))
+
+  addItems(decs.grainFields, mesh, (f, pos) => ({
+    x: pos.x + (f.ox ?? 0), y: f.tile.level * LEVEL_HEIGHT + TILE_SURFACE, z: pos.z + (f.oz ?? 0),
+    rotationY: f.rotationY ?? 0, scale: 1
+  }))
+
 
   return map
 }

@@ -617,6 +617,7 @@ export class HexGrid {
     this.decorations.populateHillsAndMountains(this.hexTiles, this.gridRadius)
     this.decorations.populateBridges(this.hexTiles, this.gridRadius)
     this.decorations.populateWaterlilies(this.hexTiles, this.gridRadius)
+    this.decorations.populateGrainFields(this.hexTiles, this.gridRadius)
   }
 
   /**

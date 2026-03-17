@@ -326,6 +326,13 @@ export const RareBuildingDefs2 = [
 ]
 export const RareBuildingNames = RareBuildingDefs2.map(b => b.name)
 
+// Grain fields (grass)
+export const GrainFieldsDefs = [
+  { name: 'building_grain',  weight: 2 },
+  { name: 'building_dirt',  weight: 1 },
+]
+export const GrainFieldsNames = GrainFieldsDefs.map(b => b.name)
+
 // Default white color for decorations (no tinting)
 export const WHITE = new Color(0xffffff)
 const _lvlColor = new Color()
@@ -345,6 +352,7 @@ export const MAX_ROCKS = 50
 export const MAX_HILLS = 10
 export const MAX_MOUNTAINS = 10
 export const MAX_HENGES = 2
+export const MAX_GRAIN_FIELDS = 40
 
 // Single merged BatchedMesh limit
-export const MAX_DEC_INSTANCES = MAX_TREES + MAX_FLOWERS + MAX_BUILDINGS + MAX_BRIDGES + MAX_WATERLILIES + MAX_ROCKS + MAX_HILLS + MAX_MOUNTAINS + MAX_HENGES + 1  // all decorations + dummy
+export const MAX_DEC_INSTANCES = MAX_TREES + MAX_FLOWERS + MAX_BUILDINGS + MAX_BRIDGES + MAX_WATERLILIES + MAX_ROCKS + MAX_HILLS + MAX_MOUNTAINS + MAX_HENGES + MAX_GRAIN_FIELDS + 1  // all decorations + dummy

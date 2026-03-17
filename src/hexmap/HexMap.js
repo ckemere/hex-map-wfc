@@ -1347,9 +1347,6 @@ export class HexMap {
     // Route roads after villages are placed
     this._routeRoads()
 
-    // Place field tiles (wheat/dirt) on eligible grass tiles
-    this._placeFields()
-
     // Repopulate decorations with zone awareness, then clean up road tiles
     this._repopulateDecorationsWithZones()
     this._removeDecorationsOnRoadTiles()
@@ -1429,108 +1426,6 @@ export class HexMap {
     this._roadOriginalTiles = []
   }
 
-
-  // ---------------------------------------------------------------------------
-  // Field placement (wheat / dirt tiles on grass)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Place field tiles on eligible grass cells.
-   * Currently uses a simple 25% random chance on undecorated flat grass.
-   *
-   * TODO: Replace the random chance below with a structured placement pass.
-   * Suggested approach: loop through every globalCell, check adjacent tile
-   * types and decorations (e.g. near villages, along roads), and build a
-   * fieldCells Set<cubeKey> with smarter criteria. Then replace the loop
-   * below to iterate fieldCells instead of rolling random per-cell.
-   */
-  _placeFields() {
-    // Revert any previous field replacements first
-    this._revertFieldReplacements()
-
-    const enableFields = App.instance?.params?.roads?.enableFields ?? false
-    if (!enableFields) return
-
-    const forestCells = this.forestCells || new Set()
-    const villageCells = this.villageCells || new Set()
-    const roadCells = this._roadCells || new Map()
-
-    const replacements = []
-
-    // TODO: This is where structured placement logic should go.
-    // For each cell, you can inspect neighbors via:
-    //   for (const dir of CUBE_DIRS) {
-    //     const nk = cubeKey(q + dir.dq, r + dir.dr, s + dir.ds)
-    //     const neighbor = this.globalCells.get(nk)
-    //     // check neighbor.type, whether nk is in villageCells, roadCells, etc.
-    //   }
-    // Then decide whether this cell should become a field.
-    for (const [key, cell] of this.globalCells) {
-      // Only flat grass tiles
-      if (cell.type !== TileType.GRASS) continue
-
-      // Skip cells in forest/village zones or on road paths
-      if (forestCells.has(key)) continue
-      if (villageCells.has(key)) continue
-      if (roadCells.has(key)) continue
-
-      // 25% chance of becoming a field
-      if (random() > 0.25) continue
-
-      // 2/3 grain, 1/3 dirt
-      const fieldType = random() < (2 / 3) ? TileType.FIELD_GRAIN : TileType.FIELD_DIRT
-      const rotation = Math.floor(random() * 6)
-
-      replacements.push({
-        q: cell.q, r: cell.r, s: cell.s,
-        type: fieldType,
-        rotation,
-        level: cell.level,
-      })
-    }
-
-    if (replacements.length > 0) {
-      this._applyFieldReplacements(replacements)
-      log(`[FIELDS] Placed ${replacements.length} field tiles`, 'color: #DAA520')
-    }
-  }
-
-  /** Apply field tile replacements, storing originals for revert. */
-  _applyFieldReplacements(replacements) {
-    if (!this._fieldOriginalTiles) this._fieldOriginalTiles = []
-    for (const tile of replacements) {
-      const key = cubeKey(tile.q, tile.r, tile.s)
-      const existing = this.globalCells.get(key)
-      if (existing) {
-        this._fieldOriginalTiles.push({
-          q: existing.q, r: existing.r, s: existing.s,
-          type: existing.type, rotation: existing.rotation, level: existing.level,
-        })
-        existing.type = tile.type
-        existing.rotation = tile.rotation
-        existing.level = tile.level
-      }
-    }
-    this.applyTileResultsToGrids(replacements)
-  }
-
-  /** Revert all field tile replacements to their original grass tiles. */
-  _revertFieldReplacements() {
-    if (!this._fieldOriginalTiles || this._fieldOriginalTiles.length === 0) return
-    const originals = this._fieldOriginalTiles
-    for (const tile of originals) {
-      const key = cubeKey(tile.q, tile.r, tile.s)
-      const existing = this.globalCells.get(key)
-      if (existing) {
-        existing.type = tile.type
-        existing.rotation = tile.rotation
-        existing.level = tile.level
-      }
-    }
-    this.applyTileResultsToGrids(originals)
-    this._fieldOriginalTiles = []
-  }
-
   /** Toggle the river debug overlay visibility (driven by Debug View dropdown) */
   setRiverDebugVisible(visible) {
     this._riverDebugVisible = visible
@@ -1547,9 +1442,7 @@ export class HexMap {
    * removes trees that land on the new road beds.
    */
   regenerateRoads() {
-    this._revertFieldReplacements()
     this._routeRoads()
-    this._placeFields()
     this._repopulateDecorationsWithZones()
     this._removeDecorationsOnRoadTiles()
   }
