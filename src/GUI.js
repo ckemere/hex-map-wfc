@@ -61,6 +61,10 @@ export class GUIManager {
     renderer: {
       dpr: 1, // Will be set dynamically based on device
     },
+    map: {
+      rows: 3,
+      cols: 7,
+    },
     roads: {
       animateWFC: false,
       showOutlines: false,
@@ -191,6 +195,10 @@ export class GUIManager {
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
     gui.add(allParams.roads, 'enableFields').name('Wheat Fields')
 
+    // Map dimensions
+    gui.add(allParams.map, 'rows', 1, 9, 1).name('Map Rows')
+    gui.add(allParams.map, 'cols', 1, 9, 1).name('Map Cols')
+
     // Seed control
     allParams.seed = getSeed() ?? 0
     const seedController = gui.add(allParams, 'seed', 0, 99999, 1).name('Seed')
@@ -201,9 +209,8 @@ export class GUIManager {
       rebuildNoiseTables()
       await app.city.reset()
       app.city.setHelpersVisible(allParams.debug.hexGrid)
-      app.city.autoBuild([
-        [0,0],[0,-1],[1,-1],[1,0],[0,1],[-1,0],[-1,-1],[-1,-2],[0,-2],[1,-2],[2,-1],[2,0],[2,1],[1,1],[0,2],[-1,1],[-2,1],[-2,0],[-2,-1]
-      ])
+      const order = app.city.getRectGridCoordinates(allParams.map.rows, allParams.map.cols)
+      app.city.autoBuild(order)
     } }, 'rebuildWithSeed').name('Build with Seed')
 
     // Action buttons
@@ -216,12 +223,15 @@ export class GUIManager {
       app.controls.target.set(0.903, 1, 1.168)
       app.controls.update()
     } }, 'reset').name('Clear All')
-    gui.add({ autoBuild: () => app.city.autoBuild([
-      [0,0],[0,-1],[1,-1],[1,0],[0,1],[-1,0],[-1,-1],[-1,-2],[0,-2],[1,-2],[2,-1],[2,0],[2,1],[1,1],[0,2],[-1,1],[-2,1],[-2,0],[-2,-1]
-    ]) }, 'autoBuild').name('Build All (Modular)')
+    gui.add({ autoBuild: () => {
+      const order = app.city.getRectGridCoordinates(allParams.map.rows, allParams.map.cols)
+      app.city.autoBuild(order)
+    } }, 'autoBuild').name('Build All (Modular)')
     gui.add({ buildAll: () => {
       import('./lib/Sounds.js').then(({ Sounds }) => Sounds.play('pop', 1.0, 0, 0.3))
-      app.city.populateAllGrids()
+      const order = app.city.getRectGridCoordinates(allParams.map.rows, allParams.map.cols)
+      const expansionCoords = order.filter(([gx, gz]) => gx !== 0 || gz !== 0)
+      app.city.populateAllGrids(expansionCoords)
     } }, 'buildAll').name('Build All (Single Solve)')
     gui.add({ benchmark: () => app.city.runBenchmark(50) }, 'benchmark').name('Modular (50 runs)')
     gui.add({ benchmarkBA: () => app.city.runBuildAllBenchmark(50) }, 'benchmarkBA').name('Single Solve (50 runs)')

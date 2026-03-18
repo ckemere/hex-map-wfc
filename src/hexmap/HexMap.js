@@ -128,6 +128,7 @@ export class HexMap {
     this._wfcIdleResolve = null
     this._autoBuilding = false
     this._waterSideIndex = null
+    this._rectBounds = null
 
     // Convenience alias
     this.hexWfcRules = null
@@ -789,6 +790,52 @@ export class HexMap {
    * Uses the same side direction as the first grid's water edge seed.
    */
   getMapCornerOceanSeeds() {
+    if (this._rectBounds) {
+      return this._getRectOceanSeeds()
+    }
+    return this._getHexOceanSeeds()
+  }
+
+  /**
+   * Ocean seeds for rectangular layouts — seed the center of all grids along one edge.
+   */
+  _getRectOceanSeeds() {
+    const { colStart, colEnd, rowStart, rowEnd } = this._rectBounds
+
+    // Pick a random edge: 0=top, 1=right, 2=bottom, 3=left
+    // _waterSideIndex may come from addWaterEdgeSeeds (0-5 hex dirs), so map to 0-3
+    const raw = this._waterSideIndex ?? Math.floor(random() * 4)
+    const side = raw % 4
+    this._waterSideIndex = raw
+
+    const edgeGrids = []
+    if (side === 0) {
+      // Top row
+      for (let gx = colStart; gx <= colEnd; gx++) edgeGrids.push([gx, rowStart])
+    } else if (side === 2) {
+      // Bottom row
+      for (let gx = colStart; gx <= colEnd; gx++) edgeGrids.push([gx, rowEnd])
+    } else if (side === 1) {
+      // Right column
+      for (let gz = rowStart; gz <= rowEnd; gz++) edgeGrids.push([colEnd, gz])
+    } else {
+      // Left column
+      for (let gz = rowStart; gz <= rowEnd; gz++) edgeGrids.push([colStart, gz])
+    }
+
+    const seeds = []
+    for (const [gx, gz] of edgeGrids) {
+      const worldOffset = this.calculateWorldOffset(gx, gz)
+      const c = worldOffsetToGlobalCube(worldOffset)
+      seeds.push({ q: c.q, r: c.r, s: c.s, type: TileType.WATER, rotation: 0, level: 0 })
+    }
+    return seeds
+  }
+
+  /**
+   * Ocean seeds for hex radius-2 layouts (original logic).
+   */
+  _getHexOceanSeeds() {
     const cubeDirs = [
       { q: 1, r: -1, s: 0 },  { q: 1, r: 0, s: -1 },
       { q: 0, r: 1, s: -1 },  { q: -1, r: 1, s: 0 },
@@ -824,17 +871,57 @@ export class HexMap {
   }
 
   /**
-   * Check if a grid position is within the valid bounds (2 rings = 19 grids)
+   * Generate grid coordinates for a rectangular layout (rows × cols).
+   * Returns [gridX, gridZ] pairs centered around (0,0), spiraling outward
+   * from center for better WFC constraint propagation.
+   * @param {number} rows - Number of rows
+   * @param {number} cols - Number of columns
+   * @returns {Array<[number,number]>} Array of [gridX, gridZ] pairs
+   */
+  getRectGridCoordinates(rows, cols) {
+    const colStart = -Math.floor((cols - 1) / 2)
+    const colEnd = colStart + cols - 1
+    const rowStart = -Math.floor((rows - 1) / 2)
+    const rowEnd = rowStart + rows - 1
+
+    // Store valid bounds for isValidGridPosition
+    this._rectBounds = { colStart, colEnd, rowStart, rowEnd }
+
+    // Collect all coords
+    const all = []
+    for (let gx = colStart; gx <= colEnd; gx++) {
+      for (let gz = rowStart; gz <= rowEnd; gz++) {
+        all.push([gx, gz])
+      }
+    }
+
+    // Sort by distance from center so WFC propagates outward
+    all.sort((a, b) => {
+      const da = Math.abs(a[0]) + Math.abs(a[1])
+      const db = Math.abs(b[0]) + Math.abs(b[1])
+      return da - db
+    })
+
+    return all
+  }
+
+  /**
+   * Check if a grid position is within the valid bounds.
+   * Uses rectangular bounds if set by getRectGridCoordinates, otherwise
+   * falls back to hex radius 2 check.
    * @param {number} gridX - Grid X coordinate
    * @param {number} gridZ - Grid Z coordinate
    * @returns {boolean} True if position is valid
    */
   isValidGridPosition(gridX, gridZ) {
-    // Convert flat-top hex odd-q offset to cube coordinates
+    if (this._rectBounds) {
+      const { colStart, colEnd, rowStart, rowEnd } = this._rectBounds
+      return gridX >= colStart && gridX <= colEnd && gridZ >= rowStart && gridZ <= rowEnd
+    }
+    // Fallback: hex radius 2
     const q = gridX
     const r = gridZ - Math.floor((gridX - (gridX & 1)) / 2)
     const s = -q - r
-    // Hex distance = max of absolute cube coords
     const ring = Math.max(Math.abs(q), Math.abs(r), Math.abs(s))
     return ring <= 2
   }
@@ -1711,9 +1798,8 @@ export class HexMap {
   clearHoverHighlight() { this.interaction.clearHoverHighlight() }
 
   async runBenchmark(runs = 3) {
-    const autoBuildOrder = [
-      [0,0],[0,-1],[1,-1],[1,0],[0,1],[-1,0],[-1,-1],[-1,-2],[0,-2],[1,-2],[2,-1],[2,0],[2,1],[1,1],[0,2],[-1,1],[-2,1],[-2,0],[-2,-1]
-    ]
+    const params = App.instance?.params ?? this.params
+    const autoBuildOrder = this.getRectGridCoordinates(params?.map?.rows ?? 3, params?.map?.cols ?? 7)
     log(`[BENCHMARK] Starting ${runs} Auto-Build runs`, 'color: blue')
     const results = []
 
@@ -1765,7 +1851,10 @@ export class HexMap {
       rebuildNoiseTables()
       await this.reset()
 
-      const result = await this.populateAllGrids(null, { animate: false })
+      const bmParams = App.instance?.params ?? this.params
+      const order = this.getRectGridCoordinates(bmParams?.map?.rows ?? 3, bmParams?.map?.cols ?? 7)
+      const expansionCoords = order.filter(([gx, gz]) => gx !== 0 || gz !== 0)
+      const result = await this.populateAllGrids(expansionCoords, { animate: false })
       results.push({ seed, ...(result || { success: false }) })
 
       if (this._buildCancelled) {
@@ -1811,6 +1900,7 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this._rectBounds = null
     this._roadOriginalTiles = []
     this.clearTileLabels()
 
