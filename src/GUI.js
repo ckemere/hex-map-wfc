@@ -129,14 +129,16 @@ export class GUIManager {
       app.perspCamera.updateProjectionMatrix()
     })
 
-    // Debug view — 'rivers'/'roads' are handled locally (not a PostFX debug mode)
-    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6, rivers: -1, roads: -2 }
+    // Debug view — 'rivers'/'roads'/'plates' are handled locally (not a PostFX debug mode)
+    const viewMap = { final: 0, color: 1, normal: 3, ao: 4, overlay: 5, mask: 6, rivers: -1, roads: -2, plates: -3 }
     gui.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       const isRivers = v === 'rivers'
       const isRoads = v === 'roads'
-      app.debugView.value = (isRivers || isRoads) ? 0 : viewMap[v]
+      const isPlates = v === 'plates'
+      app.debugView.value = (isRivers || isRoads || isPlates) ? 0 : viewMap[v]
       app.city.setRiverDebugVisible(isRivers)
       app.city.setRoadDebugVisible(isRoads)
+      app.city.setPlateDebugVisible(isPlates)
     })
 
     // Visual toggles at top level
@@ -195,11 +197,11 @@ export class GUIManager {
 
     // Tectonic plate controls
     allParams.roads.enableTectonics = true
-    allParams.roads.plateCount = 6
+    allParams.roads.plateDensity = 0.3
     allParams.roads.tectonicInfluence = 12
     allParams.roads.tectonicStrength = 2.0
     gui.add(allParams.roads, 'enableTectonics').name('Tectonic Plates')
-    gui.add(allParams.roads, 'plateCount', 2, 12, 1).name('Plate Count')
+    gui.add(allParams.roads, 'plateDensity', 0.05, 1.0, 0.05).name('Plate Density')
     gui.add(allParams.roads, 'tectonicInfluence', 4, 24, 1).name('Tectonic Influence')
     gui.add(allParams.roads, 'tectonicStrength', 0.5, 5.0, 0.1).name('Tectonic Strength')
 

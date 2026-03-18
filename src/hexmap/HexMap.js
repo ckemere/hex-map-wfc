@@ -37,6 +37,7 @@ import { ForestPlacer } from './ForestPlacer.js'
 import { VillagePlacer } from './VillagePlacer.js'
 import { buildTerrainDensity } from './TerrainNoise.js'
 import { generateTectonicPlates } from './TectonicPlates.js'
+import { PlateDebugOverlay } from './PlateDebugOverlay.js'
 
 const LEVEL_HEIGHT = 0.5
 const TILE_SURFACE = 1
@@ -1131,15 +1132,23 @@ export class HexMap {
           if (!seen.has(ck)) { seen.add(ck); allCells.push(c) }
         }
       }
+      const density = params?.roads?.plateDensity ?? 0.3
+      const plateCount = Math.max(2, Math.min(20, Math.round(density * Math.sqrt(allCells.length))))
       const tecOpts = {
-        plateCount: params?.roads?.plateCount ?? 6,
+        plateCount,
         influenceRadius: params?.roads?.tectonicInfluence ?? 12,
         biasStrength: params?.roads?.tectonicStrength ?? 2.0,
       }
       this.tectonicData = generateTectonicPlates(allCells, tecOpts)
-      log(`[AUTO-BUILD] Tectonic plates: ${tecOpts.plateCount} plates, ${this.tectonicData.boundaries.length} boundary cells`, 'color: blue')
+      log(`[AUTO-BUILD] Tectonic plates: ${plateCount} plates (density ${density}), ${this.tectonicData.boundaries.length} boundary cells`, 'color: blue')
+
+      // Update plate debug overlay
+      if (!this.plateOverlay) this.plateOverlay = new PlateDebugOverlay(this.scene)
+      this.plateOverlay.update(this.tectonicData)
+      this.plateOverlay.setVisible(this._plateDebugVisible ?? false)
     } else {
       this.tectonicData = null
+      if (this.plateOverlay) this.plateOverlay.dispose()
     }
 
     const startTime = performance.now()
@@ -1222,6 +1231,7 @@ export class HexMap {
     this._roadOriginalTiles = []
     this.clearTileLabels()
     if (this.riverOverlay) this.riverOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
@@ -1280,8 +1290,10 @@ export class HexMap {
     let elevationBias = null
     let elevationBiasStrength = 2.0
     if (enableTectonics) {
+      const density = params?.roads?.plateDensity ?? 0.3
+      const plateCount = Math.max(2, Math.min(20, Math.round(density * Math.sqrt(allSolveCells.length))))
       const tecOpts = {
-        plateCount: params?.roads?.plateCount ?? 6,
+        plateCount,
         influenceRadius: params?.roads?.tectonicInfluence ?? 12,
         biasStrength: params?.roads?.tectonicStrength ?? 2.0,
       }
@@ -1289,9 +1301,15 @@ export class HexMap {
       elevationBias = this.tectonicData.elevationBias
       elevationBiasStrength = this.tectonicData.biasStrength
       const boundaryCount = this.tectonicData.boundaries.length
-      log(`[BUILD ALL] Tectonic plates: ${tecOpts.plateCount} plates, ${boundaryCount} boundary cells`, 'color: blue')
+      log(`[BUILD ALL] Tectonic plates: ${plateCount} plates (density ${density}), ${boundaryCount} boundary cells`, 'color: blue')
+
+      // Update plate debug overlay
+      if (!this.plateOverlay) this.plateOverlay = new PlateDebugOverlay(this.scene)
+      this.plateOverlay.update(this.tectonicData)
+      this.plateOverlay.setVisible(this._plateDebugVisible ?? false)
     } else {
       this.tectonicData = null
+      if (this.plateOverlay) this.plateOverlay.dispose()
     }
 
     // ---- Seed initial collapses ----
@@ -1648,6 +1666,12 @@ export class HexMap {
     if (this.roadOverlay) this.roadOverlay.setVisible(visible)
   }
 
+  /** Toggle the plate debug overlay visibility (driven by Debug View dropdown) */
+  setPlateDebugVisible(visible) {
+    this._plateDebugVisible = visible
+    if (this.plateOverlay) this.plateOverlay.setVisible(visible)
+  }
+
   /**
    * Calculate world offset for grid coordinates
    * Traverses from origin using getGridWorldOffset for consistency
@@ -1973,6 +1997,7 @@ export class HexMap {
     // Dispose debug overlays
     if (this.riverOverlay) this.riverOverlay.dispose()
     if (this.roadOverlay) this.roadOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
@@ -2023,6 +2048,7 @@ export class HexMap {
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
     if (this.riverOverlay) this.riverOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     // Collect grids to dispose, then clear map FIRST
     // (so getOverlayObjects() won't return disposed objects)
