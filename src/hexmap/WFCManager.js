@@ -242,6 +242,8 @@ export class WFCManager {
       attemptNum: ctx.attempt,
       neighborCells: activeNeighborCells,
       slopeBias: ctx.slopeBias,
+      elevationBias: ctx.elevationBias,
+      elevationBiasStrength: ctx.elevationBiasStrength,
     })
 
     // Account for extra tries so next attempt's try number continues incrementally

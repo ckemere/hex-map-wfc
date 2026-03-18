@@ -192,6 +192,17 @@ export class GUIManager {
     })
     allParams.roads.slopeBias = 1.0
     gui.add(allParams.roads, 'slopeBias', 0.1, 5.0, 0.05).name('Slope Bias')
+
+    // Tectonic plate controls
+    allParams.roads.enableTectonics = true
+    allParams.roads.plateCount = 6
+    allParams.roads.tectonicInfluence = 12
+    allParams.roads.tectonicStrength = 2.0
+    gui.add(allParams.roads, 'enableTectonics').name('Tectonic Plates')
+    gui.add(allParams.roads, 'plateCount', 2, 12, 1).name('Plate Count')
+    gui.add(allParams.roads, 'tectonicInfluence', 4, 24, 1).name('Tectonic Influence')
+    gui.add(allParams.roads, 'tectonicStrength', 0.5, 5.0, 0.1).name('Tectonic Strength')
+
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
     gui.add(allParams.roads, 'enableFields').name('Wheat Fields')
 
