@@ -217,6 +217,7 @@ export class GUIManager {
     gui.add({ exportPNG: () => app.exportPNG() }, 'exportPNG').name('Export JPG')
     gui.add({ regenerateRoads: () => app.city.regenerateRoads() }, 'regenerateRoads').name('Regenerate Roads and Decorations')
     gui.add({ reset: () => {
+      app.city._rectBounds = null
       app.city.reset()
       app.city.setHelpersVisible(allParams.debug.hexGrid)
       app.perspCamera.position.set(0.903, 100.036, 59.610)

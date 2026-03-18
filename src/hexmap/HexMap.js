@@ -1900,7 +1900,9 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
-    this._rectBounds = null
+    // Note: _rectBounds is intentionally NOT cleared here — it's set by
+    // getRectGridCoordinates() before autoBuild/populateAllGrids and must
+    // persist across the reset() that autoBuild triggers internally.
     this._roadOriginalTiles = []
     this.clearTileLabels()
 
