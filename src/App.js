@@ -496,9 +496,9 @@ export class App {
     // Action buttons
     const actions = [
       { label: 'Build All', action: () => {
-        this.city.autoBuild([
-          [0,0],[0,-1],[1,-1],[1,0],[0,1],[-1,0],[-1,-1],[-1,-2],[0,-2],[1,-2],[2,-1],[2,0],[2,1],[1,1],[0,2],[-1,1],[-2,1],[-2,0],[-2,-1]
-        ])
+        const p = this.params
+        const order = this.city.getRectGridCoordinates(p?.map?.rows ?? 3, p?.map?.cols ?? 7)
+        this.city.autoBuild(order)
       }},
       { label: 'Clear All', action: () => {
         this.city.reset()
