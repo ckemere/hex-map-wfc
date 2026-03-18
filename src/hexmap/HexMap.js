@@ -879,6 +879,7 @@ export class HexMap {
    * @returns {Array<[number,number]>} Array of [gridX, gridZ] pairs
    */
   getRectGridCoordinates(rows, cols) {
+    log(`[GRID PLAN] Generating ${rows} rows × ${cols} cols rectangular layout`, 'color: blue')
     const colStart = -Math.floor((cols - 1) / 2)
     const colEnd = colStart + cols - 1
     const rowStart = -Math.floor((rows - 1) / 2)
@@ -886,6 +887,7 @@ export class HexMap {
 
     // Store valid bounds for isValidGridPosition
     this._rectBounds = { colStart, colEnd, rowStart, rowEnd }
+    log(`[GRID PLAN] Bounds: cols [${colStart}..${colEnd}], rows [${rowStart}..${rowEnd}]`, 'color: blue')
 
     // Collect all coords
     const all = []
@@ -902,6 +904,7 @@ export class HexMap {
       return da - db
     })
 
+    log(`[GRID PLAN] ${all.length} grids: ${all.map(([x,z]) => `[${x},${z}]`).join(', ')}`, 'color: blue')
     return all
   }
 
@@ -1084,12 +1087,17 @@ export class HexMap {
    * @param {Array<[number,number]>} order - Array of [gridX, gridZ] pairs
    */
   async autoBuild(order, { animate } = {}) {
+    log(`[AUTO-BUILD] Received order with ${order.length} grids: ${order.map(([x,z]) => `[${x},${z}]`).join(', ')}`, 'color: blue')
+    log(`[AUTO-BUILD] _rectBounds = ${JSON.stringify(this._rectBounds)}`, 'color: blue')
     // If map is already complete, reset first
     const allPopulated = order.every(([gx, gz]) => {
       const grid = this.grids.get(getGridKey(gx, gz))
       return grid && grid.state !== HexGridState.PLACEHOLDER
     })
-    if (allPopulated) await this.reset()
+    if (allPopulated) {
+      await this.reset()
+      log(`[AUTO-BUILD] After reset, _rectBounds = ${JSON.stringify(this._rectBounds)}`, 'color: blue')
+    }
 
     log('[AUTO-BUILD] Starting', 'color: blue')
     const myEpoch = ++this._buildEpoch
