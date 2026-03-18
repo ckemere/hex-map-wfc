@@ -36,6 +36,8 @@ import { RoadDebugOverlay } from './RoadDebugOverlay.js'
 import { ForestPlacer } from './ForestPlacer.js'
 import { VillagePlacer } from './VillagePlacer.js'
 import { buildTerrainDensity } from './TerrainNoise.js'
+import { generateTectonicPlates } from './TectonicPlates.js'
+import { PlateDebugOverlay } from './PlateDebugOverlay.js'
 
 const LEVEL_HEIGHT = 0.5
 const TILE_SURFACE = 1
@@ -98,6 +100,9 @@ export class HexMap {
     this.droppedCells = new Set() // Track global coords of dropped fixed cells (red labels)
     this.replacedCells = new Set() // Track global coords of replaced fixed cells (orange labels)
     this.seededCells = new Set()  // Track global coords of ocean-seeded cells (cyan labels)
+
+    // Tectonic plates — pre-WFC elevation bias
+    this.tectonicData = null  // { elevationBias, biasStrength, plates, boundaries, debug }
 
     // Interaction (hover, pointer events)
     this.interaction = new HexMapInteraction(this)
@@ -435,6 +440,8 @@ export class HexMap {
       attempt: 0,
       options,
       slopeBias: App.instance?.params?.roads?.slopeBias ?? 1.0,
+      elevationBias: this.tectonicData?.elevationBias ?? null,
+      elevationBiasStrength: this.tectonicData?.biasStrength ?? 2.0,
     }
   }
 
@@ -1108,6 +1115,42 @@ export class HexMap {
     await this._waitForWfcIdle()
     this._wfcBusy = true  // hold the lock for the entire build
 
+    // ---- Generate tectonic plates for elevation bias (shared across all grids) ----
+    const params = App.instance?.params ?? this.params
+    const enableTectonics = params?.roads?.enableTectonics ?? true
+    if (enableTectonics) {
+      // Collect all cells that will be solved to generate plates over the full map
+      const allCells = []
+      const seen = new Set()
+      for (const [gx, gz] of order) {
+        const key = getGridKey(gx, gz)
+        let grid = this.grids.get(key)
+        if (!grid) grid = await this.createGrid(gx, gz)
+        const center = grid.globalCenterCube
+        for (const c of cubeCoordsInRadius(center.q, center.r, center.s, this.hexGridRadius)) {
+          const ck = cubeKey(c.q, c.r, c.s)
+          if (!seen.has(ck)) { seen.add(ck); allCells.push(c) }
+        }
+      }
+      const density = params?.roads?.plateDensity ?? 0.3
+      const plateCount = Math.max(2, Math.min(20, Math.round(density * Math.sqrt(allCells.length))))
+      const tecOpts = {
+        plateCount,
+        influenceRadius: params?.roads?.tectonicInfluence ?? 12,
+        biasStrength: params?.roads?.tectonicStrength ?? 2.0,
+      }
+      this.tectonicData = generateTectonicPlates(allCells, tecOpts)
+      log(`[AUTO-BUILD] Tectonic plates: ${plateCount} plates (density ${density}), ${this.tectonicData.boundaries.length} boundary cells`, 'color: blue')
+
+      // Update plate debug overlay
+      if (!this.plateOverlay) this.plateOverlay = new PlateDebugOverlay(this.scene)
+      this.plateOverlay.update(this.tectonicData)
+      this.plateOverlay.setVisible(this._plateDebugVisible ?? false)
+    } else {
+      this.tectonicData = null
+      if (this.plateOverlay) this.plateOverlay.dispose()
+    }
+
     const startTime = performance.now()
     const animPromises = []
     const failedGrids = []
@@ -1188,6 +1231,7 @@ export class HexMap {
     this._roadOriginalTiles = []
     this.clearTileLabels()
     if (this.riverOverlay) this.riverOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
@@ -1241,6 +1285,33 @@ export class HexMap {
     await setStatusAsync(`[BUILD ALL] Solving ${allSolveCells.length} cells...`)
     const startTime = performance.now()
 
+    // ---- Generate tectonic plates for elevation bias ----
+    const enableTectonics = params?.roads?.enableTectonics ?? true
+    let elevationBias = null
+    let elevationBiasStrength = 2.0
+    if (enableTectonics) {
+      const density = params?.roads?.plateDensity ?? 0.3
+      const plateCount = Math.max(2, Math.min(20, Math.round(density * Math.sqrt(allSolveCells.length))))
+      const tecOpts = {
+        plateCount,
+        influenceRadius: params?.roads?.tectonicInfluence ?? 12,
+        biasStrength: params?.roads?.tectonicStrength ?? 2.0,
+      }
+      this.tectonicData = generateTectonicPlates(allSolveCells, tecOpts)
+      elevationBias = this.tectonicData.elevationBias
+      elevationBiasStrength = this.tectonicData.biasStrength
+      const boundaryCount = this.tectonicData.boundaries.length
+      log(`[BUILD ALL] Tectonic plates: ${plateCount} plates (density ${density}), ${boundaryCount} boundary cells`, 'color: blue')
+
+      // Update plate debug overlay
+      if (!this.plateOverlay) this.plateOverlay = new PlateDebugOverlay(this.scene)
+      this.plateOverlay.update(this.tectonicData)
+      this.plateOverlay.setVisible(this._plateDebugVisible ?? false)
+    } else {
+      this.tectonicData = null
+      if (this.plateOverlay) this.plateOverlay.dispose()
+    }
+
     // ---- Seed initial collapses ----
     const centerGrid = this.grids.get('0,0')
     const centerCube = centerGrid.globalCenterCube
@@ -1267,6 +1338,8 @@ export class HexMap {
       gridId: 'BUILD_ALL',
       attemptNum: 1,
       slopeBias: params?.roads?.slopeBias ?? 1.0,
+      elevationBias,
+      elevationBiasStrength,
     })
 
     if (this._buildCancelled) {
@@ -1593,6 +1666,12 @@ export class HexMap {
     if (this.roadOverlay) this.roadOverlay.setVisible(visible)
   }
 
+  /** Toggle the plate debug overlay visibility (driven by Debug View dropdown) */
+  setPlateDebugVisible(visible) {
+    this._plateDebugVisible = visible
+    if (this.plateOverlay) this.plateOverlay.setVisible(visible)
+  }
+
   /**
    * Calculate world offset for grid coordinates
    * Traverses from origin using getGridWorldOffset for consistency
@@ -1908,6 +1987,7 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this.tectonicData = null
     // Note: _rectBounds is intentionally NOT cleared here — it's set by
     // getRectGridCoordinates() before autoBuild/populateAllGrids and must
     // persist across the reset() that autoBuild triggers internally.
@@ -1917,6 +1997,7 @@ export class HexMap {
     // Dispose debug overlays
     if (this.riverOverlay) this.riverOverlay.dispose()
     if (this.roadOverlay) this.roadOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     const gridsToDispose = [...this.grids.values()]
     this.grids.clear()
@@ -1961,11 +2042,13 @@ export class HexMap {
     this.replacedCells.clear()
     this.seededCells.clear()
     this._waterSideIndex = null
+    this.tectonicData = null
     this._roadOriginalTiles = []
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
     if (this.riverOverlay) this.riverOverlay.dispose()
+    if (this.plateOverlay) this.plateOverlay.dispose()
 
     // Collect grids to dispose, then clear map FIRST
     // (so getOverlayObjects() won't return disposed objects)

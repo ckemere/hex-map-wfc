@@ -1,0 +1,172 @@
+/**
+ * PlateDebugOverlay — renders colored hex fills to visualise tectonic plates
+ * and their boundaries before WFC solving.
+ *
+ * Each plate gets a distinct hue. Boundary cells are rendered with a brighter
+ * shade and slight color shift to indicate convergent (warm) vs divergent (cool).
+ */
+
+import {
+  BufferGeometry,
+  Float32BufferAttribute,
+  Mesh,
+  MeshBasicNodeMaterial,
+  DoubleSide,
+} from 'three/webgpu'
+import { attribute } from 'three/tsl'
+import { cubeToOffset, parseCubeKey } from './HexWFCCore.js'
+
+const HEX_WIDTH = 2
+const HEX_HEIGHT = 2 / Math.sqrt(3) * 2
+const HEX_RADIUS = 2 / Math.sqrt(3) * 0.85
+const Y_OFFSET = 0.05
+
+// Generate a visually distinct color for each plate index
+function plateColor(index, count) {
+  const hue = index / Math.max(count, 1)
+  // HSL to RGB (saturation 0.6, lightness 0.45)
+  return hslToRgb(hue, 0.6, 0.45)
+}
+
+function hslToRgb(h, s, l) {
+  const a = s * Math.min(l, 1 - l)
+  const f = (n) => {
+    const k = (n + h * 12) % 12
+    return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1)
+  }
+  return { r: f(0), g: f(8), b: f(4) }
+}
+
+export class PlateDebugOverlay {
+  constructor(scene) {
+    this.scene = scene
+    this.mesh = null
+  }
+
+  /**
+   * Build the overlay from tectonic plate data.
+   * @param {Object} tectonicData — result of generateTectonicPlates()
+   *   { plates: Map<cubeKey, plateIndex>, boundaries, debug: { plateSeeds, plateVectors } }
+   */
+  update(tectonicData) {
+    this.dispose()
+    if (!tectonicData || !tectonicData.plates) return
+
+    const { plates, boundaries, elevationBias } = tectonicData
+
+    // Build a set of boundary keys + scores for quick lookup
+    const boundaryScoreMap = new Map()
+    if (boundaries) {
+      for (const bc of boundaries) {
+        const key = `${bc.q},${bc.r},${bc.s}`
+        boundaryScoreMap.set(key, bc.score)
+      }
+    }
+
+    // Count distinct plates
+    const plateIndices = new Set(plates.values())
+    const plateCount = plateIndices.size
+
+    const cellCount = plates.size
+    const vertsPerCell = 6 * 3 // 6 triangles, 3 verts each
+    const floatsPerCell = vertsPerCell * 3
+    const positions = new Float32Array(cellCount * floatsPerCell)
+    const colors = new Float32Array(cellCount * vertsPerCell * 4)
+
+    let cellIdx = 0
+    for (const [key, plateIndex] of plates) {
+      const { q, r, s } = parseCubeKey(key)
+      const offset = cubeToOffset(q, r, s)
+      const cx = offset.col * HEX_WIDTH + (Math.abs(offset.row) % 2) * HEX_WIDTH * 0.5
+      const cz = offset.row * HEX_HEIGHT * 0.75
+      const cy = 1 + Y_OFFSET
+
+      const base = plateColor(plateIndex, plateCount)
+      const isBoundary = boundaryScoreMap.has(key)
+      let color
+      if (isBoundary) {
+        const score = boundaryScoreMap.get(key)
+        // Convergent (score > 0) → warm white tint, divergent → cool dark tint
+        const t = Math.abs(score)
+        if (score > 0) {
+          // Brighten toward warm white
+          color = {
+            r: base.r + (1 - base.r) * t * 0.7,
+            g: base.g + (1 - base.g) * t * 0.3,
+            b: base.b * (1 - t * 0.3),
+          }
+        } else {
+          // Darken toward cool blue-black
+          color = {
+            r: base.r * (1 - t * 0.6),
+            g: base.g * (1 - t * 0.4),
+            b: base.b + (1 - base.b) * t * 0.4,
+          }
+        }
+      } else {
+        color = base
+      }
+
+      const alpha = isBoundary ? 0.75 : 0.55
+
+      const posBase = cellIdx * floatsPerCell
+      const colBase = cellIdx * vertsPerCell * 4
+
+      for (let i = 0; i < 6; i++) {
+        const a1 = i * Math.PI / 3
+        const a2 = ((i + 1) % 6) * Math.PI / 3
+        const x1 = cx + Math.sin(a1) * HEX_RADIUS
+        const z1 = cz + Math.cos(a1) * HEX_RADIUS
+        const x2 = cx + Math.sin(a2) * HEX_RADIUS
+        const z2 = cz + Math.cos(a2) * HEX_RADIUS
+
+        const off = posBase + i * 9
+        positions[off]     = cx;  positions[off + 1] = cy; positions[off + 2] = cz
+        positions[off + 3] = x1; positions[off + 4] = cy; positions[off + 5] = z1
+        positions[off + 6] = x2; positions[off + 7] = cy; positions[off + 8] = z2
+
+        const cOff = colBase + i * 12
+        for (let v = 0; v < 3; v++) {
+          colors[cOff + v * 4]     = color.r
+          colors[cOff + v * 4 + 1] = color.g
+          colors[cOff + v * 4 + 2] = color.b
+          colors[cOff + v * 4 + 3] = alpha
+        }
+      }
+
+      cellIdx++
+    }
+
+    const geom = new BufferGeometry()
+    geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
+    geom.setAttribute('color', new Float32BufferAttribute(colors, 4))
+
+    const mat = new MeshBasicNodeMaterial()
+    const vertColor = attribute('color', 'vec4')
+    mat.colorNode = vertColor.rgb
+    mat.opacityNode = vertColor.a
+    mat.transparent = true
+    mat.depthWrite = false
+    mat.depthTest = false
+    mat.side = DoubleSide
+
+    this.mesh = new Mesh(geom, mat)
+    this.mesh.renderOrder = 995
+    this.mesh.frustumCulled = false
+    this.mesh.visible = false
+    this.scene.add(this.mesh)
+  }
+
+  setVisible(visible) {
+    if (this.mesh) this.mesh.visible = visible
+  }
+
+  dispose() {
+    if (this.mesh) {
+      this.scene.remove(this.mesh)
+      this.mesh.geometry.dispose()
+      this.mesh.material.dispose()
+      this.mesh = null
+    }
+  }
+}

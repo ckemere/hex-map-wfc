@@ -34,6 +34,8 @@ class HexWFCSolver {
       gridId: options.gridId ?? '',
       quiet: options.quiet ?? false,
       slopeBias: options.slopeBias ?? 1.0,
+      elevationBias: options.elevationBias ?? null,    // { [cubeKey]: targetLevel }
+      elevationBiasStrength: options.elevationBiasStrength ?? 2.0,
     }
     this.log = this.options.log
     // Map<cubeKey, HexWFCCell> — cells to solve
@@ -178,10 +180,18 @@ class HexWFCSolver {
 
     const possArray = Array.from(cell.possibilities)
     const slopeBias = this.options.slopeBias
+    const elevBias = this.options.elevationBias
+    const elevStrength = this.options.elevationBiasStrength
+    const targetLevel = elevBias ? elevBias[key] : undefined
     const weights = possArray.map(k => {
       const state = HexWFCCell.parseKey(k)
-      const base = TILE_LIST[state.type]?.weight ?? 1
-      return TILE_LIST[state.type]?.highEdges?.length > 0 ? base * slopeBias : base
+      let base = TILE_LIST[state.type]?.weight ?? 1
+      if (TILE_LIST[state.type]?.highEdges?.length > 0) base *= slopeBias
+      if (targetLevel !== undefined) {
+        const levelDiff = Math.abs(state.level - targetLevel)
+        base *= Math.exp(-levelDiff * elevStrength)
+      }
+      return base
     })
     const totalWeight = weights.reduce((a, b) => a + b, 0)
     let r = random() * totalWeight
@@ -269,10 +279,18 @@ class HexWFCSolver {
     if (available.length === 0) return false
 
     const slopeBias = this.options.slopeBias
+    const elevBias = this.options.elevationBias
+    const elevStrength = this.options.elevationBiasStrength
+    const targetLevel = elevBias ? elevBias[key] : undefined
     const weights = available.map(k => {
       const state = HexWFCCell.parseKey(k)
-      const base = TILE_LIST[state.type]?.weight ?? 1
-      return TILE_LIST[state.type]?.highEdges?.length > 0 ? base * slopeBias : base
+      let base = TILE_LIST[state.type]?.weight ?? 1
+      if (TILE_LIST[state.type]?.highEdges?.length > 0) base *= slopeBias
+      if (targetLevel !== undefined) {
+        const levelDiff = Math.abs(state.level - targetLevel)
+        base *= Math.exp(-levelDiff * elevStrength)
+      }
+      return base
     })
     const total = weights.reduce((a, b) => a + b, 0)
     let r = random() * total
