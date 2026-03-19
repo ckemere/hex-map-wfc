@@ -38,6 +38,25 @@ class HexWFCSolver {
       elevationBiasStrength: options.elevationBiasStrength ?? 2.0,
     }
     this.log = this.options.log
+
+    // Precompute effective-level offset per tile type for elevation bias.
+    // Coast tiles (mixed water + non-water edges) get +0.5 so the bias
+    // gently favours shoreline over open water when the tectonic target
+    // is above 0.  Slope tiles get +levelIncrement/2 (midpoint of their
+    // low/high sides).
+    this.levelOffset = new Float32Array(TILE_LIST.length)
+    for (let i = 0; i < TILE_LIST.length; i++) {
+      const def = TILE_LIST[i]
+      if (def.levelIncrement) {
+        this.levelOffset[i] = def.levelIncrement * 0.5
+      } else {
+        const edges = Object.values(def.edges)
+        const hasWater = edges.includes('water')
+        const hasNonWater = edges.some(e => e !== 'water')
+        if (hasWater && hasNonWater) this.levelOffset[i] = 0.5
+      }
+    }
+
     // Map<cubeKey, HexWFCCell> — cells to solve
     this.cells = new Map()
     // Map<cubeKey, {type, rotation, level}> — collapsed neighbors (read-only constraints)
@@ -183,12 +202,14 @@ class HexWFCSolver {
     const elevBias = this.options.elevationBias
     const elevStrength = this.options.elevationBiasStrength
     const targetLevel = elevBias ? elevBias[key] : undefined
+    const levelOffsets = this.levelOffset
     const weights = possArray.map(k => {
       const state = HexWFCCell.parseKey(k)
       let base = TILE_LIST[state.type]?.weight ?? 1
       if (TILE_LIST[state.type]?.highEdges?.length > 0) base *= slopeBias
       if (targetLevel !== undefined) {
-        const levelDiff = Math.abs(state.level - targetLevel)
+        const effectiveLevel = state.level + (levelOffsets[state.type] ?? 0)
+        const levelDiff = Math.abs(effectiveLevel - targetLevel)
         base *= Math.exp(-levelDiff * elevStrength)
       }
       return base
@@ -282,12 +303,14 @@ class HexWFCSolver {
     const elevBias = this.options.elevationBias
     const elevStrength = this.options.elevationBiasStrength
     const targetLevel = elevBias ? elevBias[key] : undefined
+    const levelOffsets = this.levelOffset
     const weights = available.map(k => {
       const state = HexWFCCell.parseKey(k)
       let base = TILE_LIST[state.type]?.weight ?? 1
       if (TILE_LIST[state.type]?.highEdges?.length > 0) base *= slopeBias
       if (targetLevel !== undefined) {
-        const levelDiff = Math.abs(state.level - targetLevel)
+        const effectiveLevel = state.level + (levelOffsets[state.type] ?? 0)
+        const levelDiff = Math.abs(effectiveLevel - targetLevel)
         base *= Math.exp(-levelDiff * elevStrength)
       }
       return base
