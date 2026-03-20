@@ -67,13 +67,14 @@ export function generateTectonicPlates(allCells, options = {}) {
   )
 
   // --- Phase 5: Collect cells to pre-place as ocean ---
-  // Any cell whose elevation bias is below 0 should be hard-set as OCEAN
-  // before WFC solving, rather than relying on weight biasing.
+  // Only cells directly in the divergent boundary zone (boundaryScores < 0)
+  // get hard-set as OCEAN.  The diffused elevationBias extends much further
+  // (influenceRadius) and is used only for soft weight biasing.
   const oceanCells = []
-  for (const cell of allCells) {
-    const key = cubeKey(cell.q, cell.r, cell.s)
-    if ((elevationBias[key] ?? neutralLevel) < 0) {
-      oceanCells.push({ q: cell.q, r: cell.r, s: cell.s })
+  for (const [key, score] of boundaryScores) {
+    if (score < 0) {
+      const { q, r, s } = parseCubeKey(key)
+      oceanCells.push({ q, r, s })
     }
   }
 
@@ -271,7 +272,10 @@ function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width
         const nKey = cubeKey(nq, nr, ns)
 
         if (!cellSet.has(nKey)) continue
-        if (boundaryScores.has(nKey)) continue
+
+        // Allow overriding weaker convergent cells at the boundary edge
+        const existing = boundaryScores.get(nKey)
+        if (existing !== undefined && existing <= score) continue
 
         // Full divergent score across the entire zone — the influence-radius
         // diffusion (Phase 4) handles the smooth transition to neutral beyond.
