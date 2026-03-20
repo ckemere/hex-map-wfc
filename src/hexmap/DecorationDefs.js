@@ -166,7 +166,7 @@ export function isOnRoadBed(tileType, rotation, lx, lz, apothem = 1) {
 export function isCoastOrWater(tileType) {
   const def = TILE_LIST[tileType]
   if (!def) return false
-  return def.name.startsWith('COAST_') || def.name === 'WATER'
+  return def.name.startsWith('COAST_') || !!def.waterSubtype
 }
 
 // Check if a tile is a road dead-end (exactly 1 road edge) and return the exit direction

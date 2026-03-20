@@ -18,9 +18,17 @@ export const TILE_LIST = [
   { name: 'GRASS', mesh: 'hex_grass',
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
     weight: 500 },
-  { name: 'WATER', mesh: 'hex_water',
+  // Virtual water subtypes — all render as hex_water but have different
+  // effective levels for tectonic bias so the WFC places them appropriately.
+  { name: 'OCEAN', mesh: 'hex_water',
     edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
-    weight: 500 },
+    weight: 500, waterSubtype: true, levelOffset: -1 },
+  { name: 'LAKE', mesh: 'hex_water',
+    edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
+    weight: 8, waterSubtype: true, levelOffset: 1 },
+  { name: 'MOUNTAIN_LAKE', mesh: 'hex_water',
+    edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
+    weight: 3, waterSubtype: true, levelOffset: 3 },
 
   // Roads
   { name: 'ROAD_A', mesh: 'hex_road_A',
@@ -195,9 +203,16 @@ export const TILE_LIST = [
 
 /**
  * Name → index lookup (derived from TILE_LIST)
- * e.g. TileType.GRASS === 0, TileType.WATER === 1
+ * e.g. TileType.GRASS === 0, TileType.OCEAN === 1
  */
 export const TileType = Object.fromEntries(TILE_LIST.map((t, i) => [t.name, i]))
+
+/** Check whether a tile def, name, or type index is a water subtype (OCEAN / LAKE / MOUNTAIN_LAKE). */
+export function isWaterTile(v) {
+  if (typeof v === 'number') return !!TILE_LIST[v]?.waterSubtype
+  if (typeof v === 'string') return !!TILE_LIST[TileType[v]]?.waterSubtype
+  return !!v?.waterSubtype
+}
 
 /**
  * Hex directions (6 edges) for pointy-top orientation

@@ -6,7 +6,7 @@ import {
 } from 'three/webgpu'
 import { vec3, vec2, uv, float, texture, uniform, select } from 'three/tsl'
 import { CUBE_DIRS, cubeKey, cubeToOffset } from '../HexWFCCore.js'
-import { TileType } from '../HexTileData.js'
+import { TileType, isWaterTile } from '../HexTileData.js'
 import { HexTileGeometry } from '../HexTiles.js'
 
 /**
@@ -348,7 +348,7 @@ export class WavesMask {
     const results = []
 
     for (const cell of globalCells.values()) {
-      if (cell.type !== TileType.WATER) continue
+      if (!isWaterTile(cell.type)) continue
 
       const weights = new Float32Array(6)
       for (let d = 0; d < 6; d++) {
@@ -360,7 +360,7 @@ export class WavesMask {
           const neighbor = globalCells.get(cubeKey(nq, nr, ns))
 
           if (!neighbor) continue  // off map edge = open water
-          if (neighbor.type !== TileType.WATER) {
+          if (!isWaterTile(neighbor.type)) {
             weights[d] = Math.max(0, 1 - (step - 1) / radius)
             break
           }

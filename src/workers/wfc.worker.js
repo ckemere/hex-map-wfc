@@ -40,14 +40,15 @@ class HexWFCSolver {
     this.log = this.options.log
 
     // Precompute effective-level offset per tile type for elevation bias.
-    // Coast tiles (mixed water + non-water edges) get +0.5 so the bias
-    // gently favours shoreline over open water when the tectonic target
-    // is above 0.  Slope tiles get +levelIncrement/2 (midpoint of their
-    // low/high sides).
+    // Explicit levelOffset on tile defs (e.g. OCEAN -1, LAKE 1, MOUNTAIN_LAKE 3).
+    // Slope tiles default to +levelIncrement/2 (midpoint of low/high sides).
+    // Coast tiles (mixed water + non-water edges) default to +0.5.
     this.levelOffset = new Float32Array(TILE_LIST.length)
     for (let i = 0; i < TILE_LIST.length; i++) {
       const def = TILE_LIST[i]
-      if (def.levelIncrement) {
+      if (def.levelOffset !== undefined) {
+        this.levelOffset[i] = def.levelOffset
+      } else if (def.levelIncrement) {
         this.levelOffset[i] = def.levelIncrement * 0.5
       } else {
         const edges = Object.values(def.edges)
