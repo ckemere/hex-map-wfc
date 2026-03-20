@@ -14,7 +14,7 @@ import { WFCManager } from './WFCManager.js'
 import { HexMapDebug } from './HexMapDebug.js'
 import { HexMapInteraction } from './HexMapInteraction.js'
 import { setStatus, setStatusAsync, log, App } from '../App.js'
-import { TILE_LIST, TileType, LEVELS_COUNT } from './HexTileData.js'
+import { TILE_LIST, TileType, LEVELS_COUNT, isWaterTile } from './HexTileData.js'
 import { HexTileGeometry } from './HexTiles.js'
 import { HexGrid, HexGridState } from './HexGrid.js'
 import {
@@ -789,7 +789,7 @@ export class HexMap {
     const q = center.q + d.q * (radius - half) + d2.q * half
     const r = center.r + d.r * (radius - half) + d2.r * half
     const s = center.s + d.s * (radius - half) + d2.s * half
-    initialCollapses.push({ q, r, s, type: TileType.WATER, rotation: 0, level: 0 })
+    initialCollapses.push({ q, r, s, type: TileType.OCEAN, rotation: 0, level: 0 })
   }
 
   /**
@@ -834,7 +834,7 @@ export class HexMap {
     for (const [gx, gz] of edgeGrids) {
       const worldOffset = this.calculateWorldOffset(gx, gz)
       const c = worldOffsetToGlobalCube(worldOffset)
-      seeds.push({ q: c.q, r: c.r, s: c.s, type: TileType.WATER, rotation: 0, level: 0 })
+      seeds.push({ q: c.q, r: c.r, s: c.s, type: TileType.OCEAN, rotation: 0, level: 0 })
     }
     return seeds
   }
@@ -872,7 +872,7 @@ export class HexMap {
     for (const [gx, gz] of [...sideGrids, innerGrid]) {
       const worldOffset = this.calculateWorldOffset(gx, gz)
       const c = worldOffsetToGlobalCube(worldOffset)
-      seeds.push({ q: c.q, r: c.r, s: c.s, type: TileType.WATER, rotation: 0, level: 0 })
+      seeds.push({ q: c.q, r: c.r, s: c.s, type: TileType.OCEAN, rotation: 0, level: 0 })
     }
     return seeds
   }

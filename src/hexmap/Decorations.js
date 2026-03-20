@@ -552,7 +552,7 @@ export class Decorations {
           px += dx; pz += dz
           if (px < 0 || px >= size || pz < 0 || pz >= size) { blocked = true; break }
           const probeCell = hexGrid[px]?.[pz]
-          if (!probeCell || TILE_LIST[probeCell.type]?.name !== 'WATER') { blocked = true; break }
+          if (!probeCell || !TILE_LIST[probeCell.type]?.waterSubtype) { blocked = true; break }
         }
         if (!blocked) shipyardCandidates.push({ tile, waterAngle })
       }
@@ -765,7 +765,7 @@ export class Decorations {
         const oz = this._randomOffset(1.2)
         const rotationY = this._randomRotation()
         const tileName = TILE_LIST[tile.type]?.name || ''
-        const surfaceDip = tileName === 'WATER' ? -0.2 : (tileName.startsWith('COAST_') || tileName.startsWith('RIVER_')) ? -0.1 : 0
+        const surfaceDip = TILE_LIST[tile.type]?.waterSubtype ? -0.2 : (tileName.startsWith('COAST_') || tileName.startsWith('RIVER_')) ? -0.1 : 0
         const instanceId = this._placeInstance(this.mesh, this.geomIds, meshName, localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE + surfaceDip, localPos.z + oz, rotationY, 1, tile.level)
         if (instanceId === -1) break
         this.rocks.push({ tile, meshName, instanceId, rotationY, ox, oz })
@@ -1176,7 +1176,7 @@ export class Decorations {
           const ox = this._randomOffset(1.2)
           const oz = this._randomOffset(1.2)
           const rotationY = this._randomRotation()
-          const surfaceDip = (name === 'WATER') ? -0.2 : (isCoast || isRiver) ? -0.1 : 0
+          const surfaceDip = TILE_LIST[tile.type]?.waterSubtype ? -0.2 : (isCoast || isRiver) ? -0.1 : 0
           const y = baseY + surfaceDip
           const instanceId = place(meshName, localPos.x + ox, y, localPos.z + oz, rotationY, 1, tile.level)
           if (instanceId !== -1) {

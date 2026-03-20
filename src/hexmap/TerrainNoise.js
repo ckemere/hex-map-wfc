@@ -61,7 +61,7 @@ export function buildTerrainDensity(globalCells, riverCells, options = {}) {
   const coastPositions = []
   for (const [key, cell] of globalCells) {
     const def = TILE_LIST[cell.type]
-    if (def && (def.name.startsWith('COAST_') || def.name === 'WATER')) {
+    if (def && (def.name.startsWith('COAST_') || def.waterSubtype)) {
       coastPositions.push({ q: cell.q, r: cell.r, s: cell.s })
     }
   }
