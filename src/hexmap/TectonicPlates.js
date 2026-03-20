@@ -57,7 +57,17 @@ export function generateTectonicPlates(allCells, options = {}) {
     allCells, cellSet, plateMap, plateVectors, plateSeeds
   )
 
-  // --- Phase 3b: Widen divergent boundaries ---
+  // --- Phase 3b: Collect ocean constraint cells BEFORE expansion ---
+  // Only the original 1-cell-wide divergent boundary gets hard-set as OCEAN.
+  // The expanded zone and diffusion are soft influence only.
+  const oceanCells = []
+  for (const bc of boundaryCells) {
+    if (bc.score < 0) {
+      oceanCells.push({ q: bc.q, r: bc.r, s: bc.s })
+    }
+  }
+
+  // --- Phase 3c: Widen divergent boundaries (for soft bias only) ---
   expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, divergentWidth)
 
   // --- Phase 4: Diffuse boundary influence into elevation bias ---
@@ -65,17 +75,6 @@ export function generateTectonicPlates(allCells, options = {}) {
     allCells, cellSet, boundaryCells, boundaryScores,
     influenceRadius, convergentLevel, divergentLevel, neutralLevel
   )
-
-  // --- Phase 5: Collect cells to pre-place as ocean ---
-  // Any cell whose elevation bias is below 0 should be hard-set as OCEAN
-  // before WFC solving, rather than relying on weight biasing.
-  const oceanCells = []
-  for (const cell of allCells) {
-    const key = cubeKey(cell.q, cell.r, cell.s)
-    if ((elevationBias[key] ?? neutralLevel) < 0) {
-      oceanCells.push({ q: cell.q, r: cell.r, s: cell.s })
-    }
-  }
 
   return {
     elevationBias,
@@ -271,7 +270,10 @@ function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width
         const nKey = cubeKey(nq, nr, ns)
 
         if (!cellSet.has(nKey)) continue
-        if (boundaryScores.has(nKey)) continue
+
+        // Allow overriding weaker convergent cells at the boundary edge
+        const existing = boundaryScores.get(nKey)
+        if (existing !== undefined && existing <= score) continue
 
         // Full divergent score across the entire zone — the influence-radius
         // diffusion (Phase 4) handles the smooth transition to neutral beyond.
