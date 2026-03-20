@@ -204,6 +204,10 @@ export class GUIManager {
     gui.add(allParams.roads, 'plateDensity', 0.05, 1.0, 0.05).name('Plate Density')
     gui.add(allParams.roads, 'tectonicInfluence', 4, 24, 1).name('Tectonic Influence')
     gui.add(allParams.roads, 'tectonicStrength', 0.5, 5.0, 0.1).name('Tectonic Strength')
+    allParams.roads.divergentWidth = 4
+    allParams.roads.convergentWidth = 1
+    gui.add(allParams.roads, 'divergentWidth', 1, 8, 1).name('Ocean Rift Width')
+    gui.add(allParams.roads, 'convergentWidth', 1, 8, 1).name('Mountain Range Width')
 
     gui.add(allParams.roads, 'roadDensity', 0, 1, 0.05).name('Road Density')
     gui.add(allParams.roads, 'enableFields').name('Wheat Fields')

@@ -42,6 +42,7 @@ export function generateTectonicPlates(allCells, options = {}) {
   const neutralLevel = options.neutralLevel ?? 1
   const biasStrength = options.biasStrength ?? 2.0
   const divergentWidth = options.divergentWidth ?? 4
+  const convergentWidth = options.convergentWidth ?? 1
 
   // Build adjacency lookup from allCells
   const cellSet = new Set(allCells.map(c => cubeKey(c.q, c.r, c.s)))
@@ -67,8 +68,9 @@ export function generateTectonicPlates(allCells, options = {}) {
     }
   }
 
-  // --- Phase 3c: Widen divergent boundaries (for soft bias only) ---
-  expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, divergentWidth)
+  // --- Phase 3c: Widen boundaries (for soft bias only) ---
+  expandBoundaries('divergent', cellSet, boundaryScores, boundaryCells, divergentWidth)
+  expandBoundaries('convergent', cellSet, boundaryScores, boundaryCells, convergentWidth)
 
   // --- Phase 4: Diffuse boundary influence into elevation bias ---
   const elevationBias = computeElevationBias(
@@ -245,17 +247,21 @@ function classifyBoundaries(allCells, cellSet, plateMap, plateVectors, plateSeed
 }
 
 /**
- * Expand divergent boundary cells outward by BFS to create wider ocean rifts.
- * New cells get the nearest divergent boundary's score, attenuated by distance.
- * Mutates boundaryScores and boundaryCells in place.
+ * Expand boundary cells of a given polarity outward by BFS.
+ * @param {'divergent'|'convergent'} kind — which boundary type to expand
+ * @param {Set} cellSet — valid cell keys
+ * @param {Map} boundaryScores — mutable score map
+ * @param {Array} boundaryCells — mutable boundary list
+ * @param {number} width — how many rings to expand (1 = no expansion)
  */
-function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width) {
+function expandBoundaries(kind, cellSet, boundaryScores, boundaryCells, width) {
   if (width <= 1) return
 
-  // Collect divergent seed cells (score < 0)
+  const isDivergent = kind === 'divergent'
+  // Collect seed cells matching the requested polarity
   let frontier = []
   for (const bc of boundaryCells) {
-    if (bc.score < 0) {
+    if (isDivergent ? bc.score < 0 : bc.score > 0) {
       frontier.push({ q: bc.q, r: bc.r, s: bc.s, score: bc.score, dist: 0 })
     }
   }
@@ -271,12 +277,15 @@ function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width
 
         if (!cellSet.has(nKey)) continue
 
-        // Allow overriding weaker convergent cells at the boundary edge
         const existing = boundaryScores.get(nKey)
-        if (existing !== undefined && existing <= score) continue
+        if (isDivergent) {
+          // For divergent: skip if already more-negative (stronger divergent)
+          if (existing !== undefined && existing <= score) continue
+        } else {
+          // For convergent: skip if already more-positive (stronger convergent)
+          if (existing !== undefined && existing >= score) continue
+        }
 
-        // Full divergent score across the entire zone — the influence-radius
-        // diffusion (Phase 4) handles the smooth transition to neutral beyond.
         boundaryScores.set(nKey, score)
         boundaryCells.push({ q: nq, r: nr, s: ns, score, plateA: -1, plateB: -1 })
         nextFrontier.push({ q: nq, r: nr, s: ns, score, dist: ring })
