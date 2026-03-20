@@ -75,7 +75,7 @@ export class PlateDebugOverlay {
 
     // Two distinct boundary colors
     const convergentColor = { r: 1.0, g: 0.3, b: 0.1 }  // bright orange-red
-    const divergentColor  = { r: 0.1, g: 0.4, b: 1.0 }  // bright blue
+    const divergentColor  = { r: 0.1, g: 0.8, b: 0.2 }  // bright green
 
     let cellIdx = 0
     for (const [key, plateIndex] of plates) {
