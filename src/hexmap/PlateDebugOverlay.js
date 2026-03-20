@@ -4,17 +4,20 @@
  *
  * Each plate gets a distinct hue. Boundary cells are rendered with a brighter
  * shade and slight color shift to indicate convergent (warm) vs divergent (cool).
+ * Ocean constraint cells get white hex outlines.
  */
 
 import {
   BufferGeometry,
   Float32BufferAttribute,
   Mesh,
+  LineSegments,
+  LineBasicMaterial,
   MeshBasicNodeMaterial,
   DoubleSide,
 } from 'three/webgpu'
 import { attribute } from 'three/tsl'
-import { cubeToOffset, parseCubeKey } from './HexWFCCore.js'
+import { cubeToOffset, parseCubeKey, cubeKey } from './HexWFCCore.js'
 
 const HEX_WIDTH = 2
 const HEX_HEIGHT = 2 / Math.sqrt(3) * 2
@@ -41,18 +44,19 @@ export class PlateDebugOverlay {
   constructor(scene) {
     this.scene = scene
     this.mesh = null
+    this.outlineMesh = null
   }
 
   /**
    * Build the overlay from tectonic plate data.
    * @param {Object} tectonicData — result of generateTectonicPlates()
-   *   { plates: Map<cubeKey, plateIndex>, boundaries, debug: { plateSeeds, plateVectors } }
+   *   { plates: Map<cubeKey, plateIndex>, boundaries, oceanCells, debug: { plateSeeds, plateVectors } }
    */
   update(tectonicData) {
     this.dispose()
     if (!tectonicData || !tectonicData.plates) return
 
-    const { plates, boundaries, elevationBias } = tectonicData
+    const { plates, boundaries, oceanCells } = tectonicData
 
     // Build a set of boundary keys + scores for quick lookup
     const boundaryScoreMap = new Map()
@@ -142,10 +146,45 @@ export class PlateDebugOverlay {
     this.mesh.frustumCulled = false
     this.mesh.visible = false
     this.scene.add(this.mesh)
+
+    // ---- White outlines for ocean constraint cells ----
+    if (oceanCells && oceanCells.length > 0) {
+      // 6 line segments per hex, 2 endpoints × 3 floats = 36 floats per hex
+      const linePositions = new Float32Array(oceanCells.length * 36)
+      const cy2 = 1 + Y_OFFSET * 2  // slightly above fills
+      let li = 0
+      for (const oc of oceanCells) {
+        const offset = cubeToOffset(oc.q, oc.r, oc.s)
+        const cx = offset.col * HEX_WIDTH + (Math.abs(offset.row) % 2) * HEX_WIDTH * 0.5
+        const cz = offset.row * HEX_HEIGHT * 0.75
+
+        for (let i = 0; i < 6; i++) {
+          const a1 = i * Math.PI / 3
+          const a2 = ((i + 1) % 6) * Math.PI / 3
+          linePositions[li++] = cx + Math.sin(a1) * HEX_RADIUS
+          linePositions[li++] = cy2
+          linePositions[li++] = cz + Math.cos(a1) * HEX_RADIUS
+          linePositions[li++] = cx + Math.sin(a2) * HEX_RADIUS
+          linePositions[li++] = cy2
+          linePositions[li++] = cz + Math.cos(a2) * HEX_RADIUS
+        }
+      }
+
+      const lineGeom = new BufferGeometry()
+      lineGeom.setAttribute('position', new Float32BufferAttribute(linePositions, 3))
+      const lineMat = new LineBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false })
+
+      this.outlineMesh = new LineSegments(lineGeom, lineMat)
+      this.outlineMesh.renderOrder = 996
+      this.outlineMesh.frustumCulled = false
+      this.outlineMesh.visible = false
+      this.scene.add(this.outlineMesh)
+    }
   }
 
   setVisible(visible) {
     if (this.mesh) this.mesh.visible = visible
+    if (this.outlineMesh) this.outlineMesh.visible = visible
   }
 
   dispose() {
@@ -154,6 +193,12 @@ export class PlateDebugOverlay {
       this.mesh.geometry.dispose()
       this.mesh.material.dispose()
       this.mesh = null
+    }
+    if (this.outlineMesh) {
+      this.scene.remove(this.outlineMesh)
+      this.outlineMesh.geometry.dispose()
+      this.outlineMesh.material.dispose()
+      this.outlineMesh = null
     }
   }
 }
