@@ -1152,6 +1152,7 @@ export class HexMap {
         influenceRadius: params?.roads?.tectonicInfluence ?? 12,
         biasStrength: params?.roads?.tectonicStrength ?? 2.0,
         divergentWidth: params?.roads?.divergentWidth ?? 4,
+        convergentWidth: params?.roads?.convergentWidth ?? 1,
       }
       this.tectonicData = generateTectonicPlates(allCells, tecOpts)
       log(`[AUTO-BUILD] Tectonic plates: ${plateCount} plates (density ${density}), ${this.tectonicData.boundaries.length} boundary cells`, 'color: blue')
@@ -1311,6 +1312,7 @@ export class HexMap {
         influenceRadius: params?.roads?.tectonicInfluence ?? 12,
         biasStrength: params?.roads?.tectonicStrength ?? 2.0,
         divergentWidth: params?.roads?.divergentWidth ?? 4,
+        convergentWidth: params?.roads?.convergentWidth ?? 1,
       }
       this.tectonicData = generateTectonicPlates(allSolveCells, tecOpts)
       elevationBias = this.tectonicData.elevationBias
