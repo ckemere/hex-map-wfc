@@ -66,11 +66,23 @@ export function generateTectonicPlates(allCells, options = {}) {
     influenceRadius, convergentLevel, divergentLevel, neutralLevel
   )
 
+  // --- Phase 5: Collect cells to pre-place as ocean ---
+  // Any cell whose elevation bias is below 0 should be hard-set as OCEAN
+  // before WFC solving, rather than relying on weight biasing.
+  const oceanCells = []
+  for (const cell of allCells) {
+    const key = cubeKey(cell.q, cell.r, cell.s)
+    if ((elevationBias[key] ?? neutralLevel) < 0) {
+      oceanCells.push({ q: cell.q, r: cell.r, s: cell.s })
+    }
+  }
+
   return {
     elevationBias,
     biasStrength,
     plates: plateMap,
     boundaries: boundaryCells,
+    oceanCells,
     debug: { plateSeeds, plateVectors },
   }
 }
