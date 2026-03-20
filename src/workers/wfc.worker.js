@@ -160,12 +160,25 @@ class HexWFCSolver {
 
     this.propagationStack = []
 
-    // Precompute set of tile types that prevent self-adjacency
+    // Precompute chaining prevention.
+    // preventChaining: true    → prevent self-adjacency (original behaviour)
+    // preventChaining: 'group' → prevent adjacency with any type in the same group
+    // chainGroup: 'group'      → passive membership (pruned by others, doesn't trigger)
     this.noChainTypes = new Set()
+    this.chainGroups = new Map()  // groupName → Set<typeIndex>
     for (const type of types) {
-      if (TILE_LIST[type]?.preventChaining) {
-        this.noChainTypes.add(type)
+      const def = TILE_LIST[type]
+      if (!def) continue
+      const pc = def.preventChaining
+      const cg = def.chainGroup
+      // Register into named group (from either property)
+      const groupName = (typeof pc === 'string') ? pc : (typeof cg === 'string') ? cg : null
+      if (groupName) {
+        if (!this.chainGroups.has(groupName)) this.chainGroups.set(groupName, new Set())
+        this.chainGroups.get(groupName).add(type)
       }
+      // Only types with preventChaining trigger pruning
+      if (pc) this.noChainTypes.add(type)
     }
 
     // Prune chaining from fixed cells into adjacent solve cells
@@ -241,17 +254,25 @@ class HexWFCSolver {
   }
 
   /**
-   * Remove all states of the given tile type from neighbors of key
+   * Remove states of the given tile type (or its chaining group) from neighbors.
+   * If the tile belongs to a named group, all types in that group are pruned.
    */
   _pruneChaining(key, type) {
     const nbrs = this.neighbors.get(key)
     if (!nbrs) return
-    const prefix = `${type}_`
+
+    // Collect prefixes to prune — either just this type, or the whole group
+    const pc = TILE_LIST[type]?.preventChaining
+    const groupTypes = (typeof pc === 'string') ? this.chainGroups.get(pc) : null
+    const prefixes = groupTypes
+      ? [...groupTypes].map(t => `${t}_`)
+      : [`${type}_`]
+
     for (const { key: nKey } of nbrs) {
       const neighbor = this.cells.get(nKey)
       if (!neighbor || neighbor.collapsed) continue
       for (const stateKey of [...neighbor.possibilities]) {
-        if (stateKey.startsWith(prefix)) {
+        if (prefixes.some(p => stateKey.startsWith(p))) {
           neighbor.possibilities.delete(stateKey)
         }
       }
