@@ -73,6 +73,10 @@ export class PlateDebugOverlay {
     const positions = new Float32Array(cellCount * floatsPerCell)
     const colors = new Float32Array(cellCount * vertsPerCell * 4)
 
+    // Two distinct boundary colors
+    const convergentColor = { r: 1.0, g: 0.3, b: 0.1 }  // bright orange-red
+    const divergentColor  = { r: 0.1, g: 0.4, b: 1.0 }  // bright blue
+
     let cellIdx = 0
     for (const [key, plateIndex] of plates) {
       const { q, r, s } = parseCubeKey(key)
@@ -81,33 +85,16 @@ export class PlateDebugOverlay {
       const cz = offset.row * HEX_HEIGHT * 0.75
       const cy = 1 + Y_OFFSET
 
-      const base = plateColor(plateIndex, plateCount)
       const isBoundary = boundaryScoreMap.has(key)
-      let color
+      let color, alpha
       if (isBoundary) {
         const score = boundaryScoreMap.get(key)
-        // Convergent (score > 0) → warm white tint, divergent → cool dark tint
-        const t = Math.abs(score)
-        if (score > 0) {
-          // Brighten toward warm white
-          color = {
-            r: base.r + (1 - base.r) * t * 0.7,
-            g: base.g + (1 - base.g) * t * 0.3,
-            b: base.b * (1 - t * 0.3),
-          }
-        } else {
-          // Darken toward cool blue-black
-          color = {
-            r: base.r * (1 - t * 0.6),
-            g: base.g * (1 - t * 0.4),
-            b: base.b + (1 - base.b) * t * 0.4,
-          }
-        }
+        color = score > 0 ? convergentColor : divergentColor
+        alpha = 0.75
       } else {
-        color = base
+        color = plateColor(plateIndex, plateCount)
+        alpha = 0.35
       }
-
-      const alpha = isBoundary ? 0.75 : 0.55
 
       const posBase = cellIdx * floatsPerCell
       const colBase = cellIdx * vertsPerCell * 4

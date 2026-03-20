@@ -41,6 +41,7 @@ export function generateTectonicPlates(allCells, options = {}) {
   const divergentLevel = options.divergentLevel ?? -1
   const neutralLevel = options.neutralLevel ?? 1
   const biasStrength = options.biasStrength ?? 2.0
+  const divergentWidth = options.divergentWidth ?? 4
 
   // Build adjacency lookup from allCells
   const cellSet = new Set(allCells.map(c => cubeKey(c.q, c.r, c.s)))
@@ -55,6 +56,9 @@ export function generateTectonicPlates(allCells, options = {}) {
   const { boundaryScores, boundaryCells } = classifyBoundaries(
     allCells, cellSet, plateMap, plateVectors, plateSeeds
   )
+
+  // --- Phase 3b: Widen divergent boundaries ---
+  expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, divergentWidth)
 
   // --- Phase 4: Diffuse boundary influence into elevation bias ---
   const elevationBias = computeElevationBias(
@@ -227,6 +231,47 @@ function classifyBoundaries(allCells, cellSet, plateMap, plateVectors, plateSeed
   }
 
   return { boundaryScores, boundaryCells }
+}
+
+/**
+ * Expand divergent boundary cells outward by BFS to create wider ocean rifts.
+ * New cells get the nearest divergent boundary's score, attenuated by distance.
+ * Mutates boundaryScores and boundaryCells in place.
+ */
+function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width) {
+  if (width <= 1) return
+
+  // Collect divergent seed cells (score < 0)
+  let frontier = []
+  for (const bc of boundaryCells) {
+    if (bc.score < 0) {
+      frontier.push({ q: bc.q, r: bc.r, s: bc.s, score: bc.score, dist: 0 })
+    }
+  }
+
+  for (let ring = 1; ring < width; ring++) {
+    const nextFrontier = []
+    for (const { q, r, s, score } of frontier) {
+      for (const dir of CUBE_DIRS) {
+        const nq = q + dir.dq
+        const nr = r + dir.dr
+        const ns = s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+
+        if (!cellSet.has(nKey)) continue
+        if (boundaryScores.has(nKey)) continue
+
+        // Attenuate: linear falloff over the width
+        const attenuation = 1 - ring / width
+        const newScore = score * attenuation
+
+        boundaryScores.set(nKey, newScore)
+        boundaryCells.push({ q: nq, r: nr, s: ns, score: newScore, plateA: -1, plateB: -1 })
+        nextFrontier.push({ q: nq, r: nr, s: ns, score, dist: ring })
+      }
+    }
+    frontier = nextFrontier
+  }
 }
 
 /**
