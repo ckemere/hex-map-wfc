@@ -410,10 +410,23 @@ export class HexMap {
     // Seed ocean at map corners that fall within this grid
     const solveSet = new Set(solveCells.map(c => cubeKey(c.q, c.r, c.s)))
     const fixedSet = new Set(fixedCells.map(fc => cubeKey(fc.q, fc.r, fc.s)))
+    const collapsedSet = new Set(initialCollapses.map(ic => cubeKey(ic.q, ic.r, ic.s)))
     for (const seed of this.getMapCornerOceanSeeds()) {
       const key = cubeKey(seed.q, seed.r, seed.s)
-      if (solveSet.has(key) && !fixedSet.has(key)) {
+      if (solveSet.has(key) && !fixedSet.has(key) && !collapsedSet.has(key)) {
         initialCollapses.push(seed)
+        collapsedSet.add(key)
+      }
+    }
+
+    // Pre-place tectonic ocean cells that fall within this grid
+    if (this.tectonicData?.oceanCells) {
+      for (const oc of this.tectonicData.oceanCells) {
+        const key = cubeKey(oc.q, oc.r, oc.s)
+        if (solveSet.has(key) && !fixedSet.has(key) && !collapsedSet.has(key)) {
+          initialCollapses.push({ q: oc.q, r: oc.r, s: oc.s, type: TileType.OCEAN, rotation: 0, level: 0 })
+          collapsedSet.add(key)
+        }
       }
     }
 
@@ -1321,6 +1334,18 @@ export class HexMap {
       { q: centerCube.q, r: centerCube.r, s: centerCube.s, type: TileType.GRASS, rotation: 0, level: 0 },
       ...this.getMapCornerOceanSeeds(),
     ]
+
+    // Pre-place tectonic ocean cells
+    if (this.tectonicData?.oceanCells) {
+      const collapsedSet = new Set(initialCollapses.map(ic => cubeKey(ic.q, ic.r, ic.s)))
+      for (const oc of this.tectonicData.oceanCells) {
+        const key = cubeKey(oc.q, oc.r, oc.s)
+        if (!collapsedSet.has(key)) {
+          initialCollapses.push({ q: oc.q, r: oc.r, s: oc.s, type: TileType.OCEAN, rotation: 0, level: 0 })
+        }
+      }
+      log(`[BUILD ALL] Pre-placed ${this.tectonicData.oceanCells.length} ocean cells in divergent zones`, 'color: blue')
+    }
 
     // Track seeded cells for debug labels
     for (const ic of initialCollapses) {

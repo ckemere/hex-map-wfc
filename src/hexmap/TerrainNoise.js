@@ -11,7 +11,7 @@
  */
 
 import { cubeKey, cubeToOffset, parseCubeKey, CUBE_DIRS, cubeDistance } from './HexWFCCore.js'
-import { TILE_LIST, TileType } from './HexTileData.js'
+import { TILE_LIST, TileType, isGrassTile } from './HexTileData.js'
 import { HexTileGeometry } from './HexTiles.js'
 import { globalNoiseA, globalNoiseB, globalNoiseC } from './DecorationDefs.js'
 
@@ -71,7 +71,7 @@ export function buildTerrainDensity(globalCells, riverCells, options = {}) {
 
   for (const [key, cell] of globalCells) {
     // Only grass tiles are candidates for either
-    if (cell.type !== TileType.GRASS) continue
+    if (!isGrassTile(cell.type)) continue
     if (riverCells.has(key)) continue
 
     // Convert to world position for noise sampling

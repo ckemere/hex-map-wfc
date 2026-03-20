@@ -91,16 +91,19 @@ class HexWFCSolver {
       if (!def) continue
 
       const isSlope = def.highEdges && def.highEdges.length > 0
+      const defMin = def.levelMin ?? 0
 
       for (let rotation = 0; rotation < 6; rotation++) {
         if (isSlope) {
           const increment = def.levelIncrement ?? 1
-          const maxBaseLevel = LEVELS_COUNT - 1 - increment
-          for (let level = 0; level <= maxBaseLevel; level++) {
+          const slopeMax = LEVELS_COUNT - 1 - increment
+          const defMax = def.levelMax ?? slopeMax
+          for (let level = defMin; level <= Math.min(defMax, slopeMax); level++) {
             allStates.push({ type, rotation, level })
           }
         } else {
-          for (let level = 0; level < LEVELS_COUNT; level++) {
+          const defMax = def.levelMax ?? (LEVELS_COUNT - 1)
+          for (let level = defMin; level <= defMax; level++) {
             allStates.push({ type, rotation, level })
           }
         }

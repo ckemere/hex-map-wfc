@@ -1,5 +1,5 @@
 import { Object3D, BatchedMesh } from 'three/webgpu'
-import { TILE_LIST, TileType, HexDir, getHexNeighborOffset, rotateHexEdges, LEVELS_COUNT } from './HexTileData.js'
+import { TILE_LIST, TileType, HexDir, getHexNeighborOffset, rotateHexEdges, LEVELS_COUNT, isGrassTile } from './HexTileData.js'
 import { HexTileGeometry } from './HexTiles.js'
 import { random, shuffle } from '../SeededRandom.js'
 import gsap from 'gsap'
@@ -241,7 +241,7 @@ export class Decorations {
 
     for (const tile of hexTiles) {
       // Only flat grass tiles (not slopes)
-      if (tile.type !== TileType.GRASS) continue
+      if (!isGrassTile(tile.type)) continue
 
       // Skip tiles claimed by buildings
       if (buildingTileIds.has(tile.id)) continue
@@ -364,7 +364,7 @@ export class Decorations {
       }
 
       // Only consider grass tiles for noise-based and windmill placement
-      if (tile.type !== TileType.GRASS) continue
+      if (!isGrassTile(tile.type)) continue
 
       // Check if any hex neighbors are coast/ocean — average direction to all water neighbors
       let waterAngle = null
@@ -576,7 +576,7 @@ export class Decorations {
     if (availableRare.length > 0) {
       const rareCandidates = []
       for (const tile of hexTiles) {
-        if (tile.type !== TileType.GRASS) continue
+        if (!isGrassTile(tile.type)) continue
         if (tile.level < 2) continue
         if (buildingTileIds.has(tile.id)) continue
         rareCandidates.push(tile)
@@ -682,7 +682,7 @@ export class Decorations {
     // Score candidate tiles by noise value
     const candidates = []
     for (const tile of hexTiles) {
-      if (tile.type !== TileType.GRASS) continue
+      if (!isGrassTile(tile.type)) continue
       if (buildingTileIds.has(tile.id)) continue
 
       const localPos = HexTileGeometry.getWorldPosition(
@@ -793,7 +793,7 @@ export class Decorations {
 
       const isCliff = def.levelIncrement && def.name.includes('CLIFF')
       const isRiverEnd = def.name === 'RIVER_END'
-      const isHighGrass = def.name === 'GRASS' && tile.level >= LEVELS_COUNT - 1
+      const isHighGrass = def.name === 'MOUNTAIN' || def.name === 'HIGH_MOUNTAIN'
 
       if (!isCliff && !isRiverEnd && !isHighGrass) continue
 
@@ -877,7 +877,7 @@ export class Decorations {
     // Score candidate tiles by noise value
     const candidates = []
     for (const tile of hexTiles) {
-      if (tile.type !== TileType.GRASS) continue
+      if (!isGrassTile(tile.type)) continue
       if (buildingTileIds.has(tile.id)) continue
       if (treeTileIds.has(tile.id)) continue
       if (flowerTileIds.has(tile.id)) continue
@@ -1046,7 +1046,7 @@ export class Decorations {
               if (topId !== -1) this.buildings.push({ tile, meshName: TOWER_TOP_MESH, instanceId: topId, rotationY: angle })
             }
           }
-        } else if (tile.type === TileType.GRASS && globalNoiseC) {
+        } else if (isGrassTile(tile.type) && globalNoiseC) {
           const worldX = localPos.x + offsetX
           const worldZ = localPos.z + offsetZ
           const noise = globalNoiseC.scaled2D(worldX, worldZ)
@@ -1069,7 +1069,7 @@ export class Decorations {
       }
 
       // Trees (noise-based, skip tiles with buildings)
-      if (tile.type === TileType.GRASS && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
+      if (isGrassTile(tile.type) && !buildingTileIds.has(tile.id) && this.mesh && globalNoiseA && globalNoiseB) {
         const worldX = localPos.x + offsetX
         const worldZ = localPos.z + offsetZ
         const noiseA = globalNoiseA.scaled2D(worldX, worldZ)
@@ -1138,7 +1138,7 @@ export class Decorations {
       // Hills and mountains
       const isCliff = def.levelIncrement && name.includes('CLIFF')
       const isRiverEnd = name === 'RIVER_END'
-      const isHighGrass = name === 'GRASS' && tile.level >= 2
+      const isHighGrass = name === 'MOUNTAIN' || name === 'HIGH_MOUNTAIN' || name === 'HILL'
       if ((isCliff || isRiverEnd || isHighGrass) && this.mesh) {
         const chance = isRiverEnd ? 0.7 : isHighGrass ? 0.1 : 0.1
         if (random() <= chance) {
