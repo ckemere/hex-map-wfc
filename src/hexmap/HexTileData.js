@@ -22,13 +22,13 @@ export const TILE_LIST = [
   // effective levels for tectonic bias so the WFC places them appropriately.
   { name: 'OCEAN', mesh: 'hex_water',
     edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
-    weight: 500, waterSubtype: true, levelOffset: -1 },
+    weight: 500, waterSubtype: true, levelOffset: -1, chainGroup: 'water' },
   { name: 'LAKE', mesh: 'hex_water',
     edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
-    weight: 8, waterSubtype: true, levelOffset: 1 },
+    weight: 8, waterSubtype: true, levelOffset: 1, preventChaining: 'water' },
   { name: 'MOUNTAIN_LAKE', mesh: 'hex_water',
     edges: { NE: 'water', E: 'water', SE: 'water', SW: 'water', W: 'water', NW: 'water' },
-    weight: 3, waterSubtype: true, levelOffset: 3 },
+    weight: 3, waterSubtype: true, levelOffset: 3, preventChaining: 'water' },
 
   // Roads
   { name: 'ROAD_A', mesh: 'hex_road_A',
