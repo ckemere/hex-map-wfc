@@ -38,7 +38,7 @@ export function generateTectonicPlates(allCells, options = {}) {
   const plateCount = options.plateCount ?? 6
   const influenceRadius = options.influenceRadius ?? 12
   const convergentLevel = options.convergentLevel ?? (LEVELS_COUNT - 1) // 4
-  const divergentLevel = options.divergentLevel ?? -3
+  const divergentLevel = options.divergentLevel ?? -1
   const neutralLevel = options.neutralLevel ?? 1
   const biasStrength = options.biasStrength ?? 2.0
   const divergentWidth = options.divergentWidth ?? 4
@@ -261,12 +261,10 @@ function expandDivergentBoundaries(cellSet, boundaryScores, boundaryCells, width
         if (!cellSet.has(nKey)) continue
         if (boundaryScores.has(nKey)) continue
 
-        // Attenuate: linear falloff over the width
-        const attenuation = 1 - ring / width
-        const newScore = score * attenuation
-
-        boundaryScores.set(nKey, newScore)
-        boundaryCells.push({ q: nq, r: nr, s: ns, score: newScore, plateA: -1, plateB: -1 })
+        // Full divergent score across the entire zone — the influence-radius
+        // diffusion (Phase 4) handles the smooth transition to neutral beyond.
+        boundaryScores.set(nKey, score)
+        boundaryCells.push({ q: nq, r: nr, s: ns, score, plateA: -1, plateB: -1 })
         nextFrontier.push({ q: nq, r: nr, s: ns, score, dist: ring })
       }
     }
